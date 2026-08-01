@@ -1,6 +1,6 @@
 [project]
 name = "interactive-media-reader"
-version = "0.3.1"
+version = "0.3.2"
 description = "Build a same-language interactive transcript reader from one local media file."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"

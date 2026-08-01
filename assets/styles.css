@@ -272,7 +272,7 @@ body.player-collapsed .player { transform: translateY(100%); opacity: 0; pointer
 .toggle input { accent-color: var(--player-accent); }
 .settings-group { border-left: 1px solid var(--player-line); padding-left: clamp(10px, 2vw, 24px); }
 .settings-group button { font-size: 13px; }
-.controls .shortcut-help { display: flex; width: auto; padding-inline: 13px; gap: 7px; color: var(--player-ink); font-size: 13px; }
+.controls .shortcut-help { display: flex; width: auto; padding-inline: 13px; align-items: center; justify-content: center; gap: 7px; color: var(--player-ink); font-size: 13px; }
 .controls .shortcut-help .shortcut-icon { width: 19px; height: 19px; flex: 0 0 auto; }
 
 .panel-handle {

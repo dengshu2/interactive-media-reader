@@ -55,6 +55,8 @@ class StaticAssetTests(unittest.TestCase):
         styles = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
         script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn('class="shortcut-icon"', html)
+        self.assertIn(".shortcut-help { display: flex", styles)
+        self.assertIn("align-items: center; justify-content: center", styles)
         self.assertNotIn('content: "?"', styles)
         self.assertIn("env(safe-area-inset-bottom)", styles)
         self.assertIn("ResizeObserver", script)

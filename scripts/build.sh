@@ -6,7 +6,7 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/interactive-media-reader"
 VENV="$CACHE_DIR/venv"
 STAMP="$CACHE_DIR/environment-version"
 LOCK_HASH="$(shasum -a 256 "$SKILL_DIR/uv.lock" | awk '{print $1}')"
-EXPECTED_VERSION="0.3.1-$LOCK_HASH"
+EXPECTED_VERSION="0.3.2-$LOCK_HASH"
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg is required (brew install ffmpeg)" >&2; exit 1; }
 command -v ffprobe >/dev/null || { echo "ffprobe is required (brew install ffmpeg)" >&2; exit 1; }
