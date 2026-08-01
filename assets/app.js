@@ -11,7 +11,10 @@ const sidebar = $('#sidebar');
 const player = $('#player');
 const sidebarHandle = $('#sidebarHandle');
 const playerHandle = $('#playerHandle');
-const layoutStorageKey = 'english-audio-reader-layout';
+const layoutStorageKey = 'imr-layout';
+const themeStorageKey = 'imr-theme';
+const fontStorageKey = 'imr-font-size';
+const fontSizes = [16, 17.5, 19, 20.5, 22];
 const speedValues = Array.from(speedSelect.options, (option) => Number(option.value));
 let data;
 let activeIndex = -1;
@@ -20,6 +23,9 @@ let sentenceElements = [];
 let chapterElements = new Map();
 let rafId;
 let toastTimer;
+let fontIndex = 2;
+let lastProgressSave = 0;
+let lastProgressLabel = '';
 
 function saveLayoutState() {
   try {
@@ -32,11 +38,10 @@ function saveLayoutState() {
   }
 }
 
-function updatePanelHandle(handle, collapsed, collapsedIcon, expandedIcon, panelName) {
+function updatePanelHandle(handle, collapsed, panelName) {
   const label = `${collapsed ? '展开' : '收起'}${panelName}`;
   handle.setAttribute('aria-expanded', String(!collapsed));
   handle.title = label;
-  handle.querySelector('[aria-hidden="true"]').textContent = collapsed ? expandedIcon : collapsedIcon;
   handle.querySelector('.sr-only').textContent = label;
 }
 
@@ -44,7 +49,7 @@ function setSidebarCollapsed(collapsed, persist = true) {
   document.body.classList.toggle('sidebar-collapsed', collapsed);
   sidebar.inert = collapsed;
   sidebar.setAttribute('aria-hidden', String(collapsed));
-  updatePanelHandle(sidebarHandle, collapsed, '‹', '›', '章节栏');
+  updatePanelHandle(sidebarHandle, collapsed, '章节栏');
   if (persist) saveLayoutState();
 }
 
@@ -52,7 +57,7 @@ function setPlayerCollapsed(collapsed, persist = true) {
   document.body.classList.toggle('player-collapsed', collapsed);
   player.inert = collapsed;
   player.setAttribute('aria-hidden', String(collapsed));
-  updatePanelHandle(playerHandle, collapsed, '⌄', '⌃', '播放栏');
+  updatePanelHandle(playerHandle, collapsed, '播放栏');
   if (persist) saveLayoutState();
 }
 
@@ -132,6 +137,15 @@ function update() {
   if (!seek.matches(':active')) seek.value = current;
   $('#time').textContent = `${formatTime(current)} / ${formatTime(duration)}`;
 
+  if (!audio.paused && Math.abs(current - lastProgressSave) >= 5) saveProgress(current);
+  const progressText = duration
+    ? `已听 ${Math.min(100, Math.round((current / duration) * 100))}% · ${formatTime(current)}`
+    : '';
+  if (progressText !== lastProgressLabel) {
+    lastProgressLabel = progressText;
+    $('#listenProgress').textContent = progressText;
+  }
+
   if ($('#repeat').checked && activeIndex >= 0) {
     const sentence = data.sentences[activeIndex];
     if (current >= sentence.end) {
@@ -197,10 +211,84 @@ function moveSentence(delta, focus = false) {
   playSentence(selectedIndex + delta, focus);
 }
 
+const themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function storedTheme() {
+  try {
+    return localStorage.getItem(themeStorageKey);
+  } catch (error) {
+    return null;
+  }
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#iconMoon').hidden = theme === 'dark';
+  $('#iconSun').hidden = theme !== 'dark';
+  document.querySelector('meta[name="theme-color"]')
+    .setAttribute('content', theme === 'dark' ? '#161c23' : '#f4efe4');
+}
+
+function applyFontSize(size, notify = false) {
+  document.body.style.setProperty('--copy-size', `${size}px`);
+  if (notify) showToast(`正文字号 ${size}px`);
+}
+
+function changeFontSize(direction) {
+  const next = Math.max(0, Math.min(fontSizes.length - 1, fontIndex + direction));
+  if (next === fontIndex) {
+    showToast(direction > 0 ? '已是最大字号' : '已是最小字号');
+    return;
+  }
+  fontIndex = next;
+  applyFontSize(fontSizes[fontIndex], true);
+  try {
+    localStorage.setItem(fontStorageKey, String(fontSizes[fontIndex]));
+  } catch (error) {
+    console.warn('Could not save font size', error);
+  }
+}
+
+function progressKey() {
+  return `imr-progress:${data.title}:${Math.round(data.duration || 0)}`;
+}
+
+function saveProgress(current) {
+  lastProgressSave = current;
+  try {
+    localStorage.setItem(progressKey(), JSON.stringify({ t: Math.round(current * 100) / 100, at: Date.now() }));
+  } catch (error) {
+    console.warn('Could not save progress', error);
+  }
+}
+
+function restoreProgress() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(progressKey()) || 'null');
+  } catch (error) {
+    saved = null;
+  }
+  const duration = audio.duration || data.duration || 0;
+  if (!saved || !(saved.t > 20) || saved.t > duration - 20) return;
+  audio.currentTime = saved.t;
+  lastProgressSave = saved.t;
+  setActive(findSentenceIndex(saved.t));
+  update();
+  showToast(`已恢复到上次位置 ${formatTime(saved.t)}`);
+}
+
 function render() {
+  document.title = `${data.title} · Interactive Media Reader`;
   $('#title').textContent = data.title;
   $('#brandTitle').textContent = data.title;
-  $('#sentenceCount').textContent = `${data.sentences.length.toLocaleString()} sentences`;
+  $('#heroMeta').textContent = [
+    formatTime(data.duration),
+    `${data.chapters.length} 章`,
+    `${data.sentences.length.toLocaleString()} 句`,
+    (data.sourceLanguage || '').toUpperCase(),
+  ].filter(Boolean).join(' · ');
+  $('#sentenceCount').textContent = `${data.sentences.length.toLocaleString()} 句`;
   $('#alignmentStatus').textContent = data.alignment.display ||
     `Alignment ${Math.round((data.alignment.exactTokenMatchRate || 0) * 100)}% · ${data.alignment.lowConfidenceSentences} to review`;
 
@@ -211,8 +299,9 @@ function render() {
     const navButton = document.createElement('button');
     navButton.className = 'chapter-link';
     navButton.dataset.chapterLink = chapter.id;
-    navButton.innerHTML = `<span class="chapter-number">${String(chapterIndex + 1).padStart(2, '0')}</span><span class="chapter-name"></span>`;
+    navButton.innerHTML = `<span class="chapter-number">${String(chapterIndex + 1).padStart(2, '0')}</span><span class="chapter-body"><span class="chapter-name"></span><span class="chapter-time"></span></span>`;
     navButton.querySelector('.chapter-name').textContent = chapter.title;
+    navButton.querySelector('.chapter-time').textContent = formatTime(chapter.start);
     navButton.addEventListener('click', () => {
       chapterElements.get(chapter.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       const first = grouped.get(chapter.id)?.[0];
@@ -223,8 +312,11 @@ function render() {
     const section = document.createElement('section');
     section.className = 'chapter';
     section.id = chapter.id;
-    section.innerHTML = '<h2></h2><div class="chapter-copy"></div>';
+    section.innerHTML = '<h2></h2><p class="chapter-meta"></p><div class="chapter-copy"></div>';
     section.querySelector('h2').textContent = chapter.title;
+    const chapterEnd = data.chapters[chapterIndex + 1]?.start ?? (data.duration || chapter.start);
+    section.querySelector('.chapter-meta').textContent =
+      `${formatTime(chapter.start)} 起 · 时长 ${formatTime(Math.max(0, chapterEnd - chapter.start))} · ${chapter.sentenceCount} 句`;
     chapterElements.set(chapter.id, section);
     const copy = section.querySelector('.chapter-copy');
     let paragraph;
@@ -261,8 +353,19 @@ function render() {
     $('#reader').append(section);
   }
 
+  const totalDuration = data.duration || 0;
+  if (totalDuration > 0) {
+    for (const chapter of data.chapters.slice(1)) {
+      const tick = document.createElement('span');
+      tick.className = 'seek-tick';
+      tick.style.left = `${(chapter.start / totalDuration) * 100}%`;
+      $('#seekTicks').append(tick);
+    }
+  }
+
   audio = data.mediaType === 'video' ? mediaVideo : audioFallback;
   audio.src = data.mediaUrl || data.audioUrl;
+  audio.addEventListener('loadedmetadata', restoreProgress, { once: true });
   $('#mediaStage').hidden = data.mediaType !== 'video';
   $('#loading').hidden = true;
   $('#app').hidden = false;
@@ -272,7 +375,7 @@ function render() {
 
 async function init() {
   try {
-    const response = await fetch('data/reader.json?v=1');
+    const response = await fetch('data/reader.json?v=3');
     if (!response.ok) throw new Error(`reader.json: HTTP ${response.status}`);
     data = await response.json();
     render();
@@ -282,19 +385,22 @@ async function init() {
   }
 }
 
+function setPlayIcon(playing) {
+  $('#iconPlay').hidden = playing;
+  $('#iconPause').hidden = !playing;
+  playButton.setAttribute('aria-label', playing ? '暂停' : '播放');
+}
+
 playButton.addEventListener('click', togglePlayback);
 mediaElements.forEach((element) => {
   element.addEventListener('play', () => {
-    playButton.textContent = '❚❚';
-    playButton.setAttribute('aria-label', '暂停');
-    playButton.title = '播放/暂停（空格或 K）';
+    setPlayIcon(true);
     cancelAnimationFrame(rafId);
     update();
   });
   element.addEventListener('pause', () => {
-    playButton.textContent = '▶';
-    playButton.setAttribute('aria-label', '播放');
-    playButton.title = '播放/暂停（空格或 K）';
+    setPlayIcon(false);
+    if (data) saveProgress(audio.currentTime);
     cancelAnimationFrame(rafId);
     update();
   });
@@ -379,6 +485,50 @@ document.addEventListener('keydown', (event) => {
       handled = false;
   }
   if (handled) event.preventDefault();
+});
+
+applyTheme(storedTheme() || (themeQuery.matches ? 'dark' : 'light'));
+themeQuery.addEventListener('change', (event) => {
+  if (!storedTheme()) applyTheme(event.matches ? 'dark' : 'light');
+});
+$('#themeToggle').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  try {
+    localStorage.setItem(themeStorageKey, next);
+  } catch (error) {
+    console.warn('Could not save theme', error);
+  }
+  applyTheme(next);
+  showToast(next === 'dark' ? '已切换到深色模式' : '已切换到浅色模式');
+});
+
+try {
+  const savedFontSize = Number(localStorage.getItem(fontStorageKey));
+  if (fontSizes.includes(savedFontSize)) fontIndex = fontSizes.indexOf(savedFontSize);
+} catch (error) {
+  console.warn('Could not restore font size', error);
+}
+if (fontIndex !== 2) applyFontSize(fontSizes[fontIndex]);
+$('#fontSmaller').addEventListener('click', () => changeFontSize(-1));
+$('#fontLarger').addEventListener('click', () => changeFontSize(1));
+
+seek.addEventListener('pointermove', (event) => {
+  const duration = audio.duration || data?.duration || 0;
+  if (!duration) return;
+  const rect = seek.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const bubble = $('#seekBubble');
+  bubble.hidden = false;
+  bubble.style.left = `${ratio * 100}%`;
+  bubble.textContent = formatTime(ratio * duration);
+});
+seek.addEventListener('pointerleave', () => { $('#seekBubble').hidden = true; });
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && data) saveProgress(audio.currentTime);
+});
+window.addEventListener('pagehide', () => {
+  if (data) saveProgress(audio.currentTime);
 });
 
 restoreLayoutState();

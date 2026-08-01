@@ -12,7 +12,7 @@ command -v ffmpeg >/dev/null || { echo "ffmpeg is required (brew install ffmpeg)
 command -v ffprobe >/dev/null || { echo "ffprobe is required (brew install ffmpeg)" >&2; exit 1; }
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
-  echo "interactive-media-reader 0.1.0 requires macOS Apple Silicon." >&2
+  echo "interactive-media-reader requires macOS Apple Silicon (MLX backend)." >&2
   exit 1
 fi
 
@@ -32,7 +32,10 @@ else
   else
     python3 -m venv "$VENV"
     "$VENV/bin/python" -m pip install --upgrade pip
-    "$VENV/bin/python" -m pip install "mlx-whisper==0.4.3" "numpy==2.4.6"
+    # Read the pinned dependencies from pyproject.toml so they live in one place.
+    DEPS="$(PYPROJECT="$SKILL_DIR/pyproject.toml" "$VENV/bin/python" -c 'import os, tomllib; print(" ".join(tomllib.load(open(os.environ["PYPROJECT"], "rb"))["project"]["dependencies"]))')"
+    # shellcheck disable=SC2086
+    "$VENV/bin/python" -m pip install $DEPS
   fi
   PY="$VENV/bin/python"
   printf '%s\n' "$EXPECTED_VERSION" > "$STAMP"

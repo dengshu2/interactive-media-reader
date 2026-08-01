@@ -17,9 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import mlx_whisper
-
-END_RE = re.compile(r"[.!?](?:[\"'”’])?$")
+END_RE = re.compile(r"[.!?。！？](?:[\"'”’」』])?$")
 
 
 def extract_clip(audio: Path, output: Path, start: float, end: float) -> None:
@@ -44,6 +42,8 @@ def transcribe_region(
     context_seconds: float = 3.0,
 ) -> list[dict]:
     """Transcribe a region in short windows and return non-overlapping timed words."""
+    import mlx_whisper
+
     span = max(0.01, end - start)
     part_count = max(1, math.ceil(span / owner_seconds))
     part_span = span / part_count
@@ -86,17 +86,26 @@ def transcribe_region(
                     )
 
     recovered.sort(key=lambda item: (item["start"], item["end"]))
+    return stitch_words(recovered)
 
-    # Neighboring short windows can assign slightly different timestamps to the
-    # same boundary word. Merge only overlapping identical tokens; intentional
-    # repetitions have consecutive, non-overlapping timestamps and are retained.
+
+def normalized_token(word: str) -> str:
+    return re.sub(r"[^\w']+", "", word.lower())
+
+
+def stitch_words(recovered: list[dict]) -> list[dict]:
+    """Merge duplicated boundary tokens from neighboring short windows.
+
+    Neighboring windows can assign slightly different timestamps to the same
+    boundary word. Merge only overlapping identical tokens; intentional
+    repetitions have consecutive, non-overlapping timestamps and are retained.
+    """
     stitched: list[dict] = []
     for word in recovered:
-        normalized = re.sub(r"[^a-z0-9']+", "", word["word"].lower())
+        normalized = normalized_token(word["word"])
         if stitched:
             previous = stitched[-1]
-            previous_normalized = re.sub(r"[^a-z0-9']+", "", previous["word"].lower())
-            if normalized and normalized == previous_normalized and word["start"] <= previous["end"] + 0.05:
+            if normalized and normalized == normalized_token(previous["word"]) and word["start"] <= previous["end"] + 0.05:
                 previous["start"] = min(previous["start"], word["start"])
                 previous["end"] = max(previous["end"], word["end"])
                 previous["probability"] = max(previous["probability"], word["probability"])

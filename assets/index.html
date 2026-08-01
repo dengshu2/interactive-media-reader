@@ -6,30 +6,39 @@
   <meta name="theme-color" content="#f4efe4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'">
   <title>Interactive Media Reader</title>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f5a78'/%3E%3Cpath d='M17 21h30M17 31h16M17 41h12' stroke='%23f4efe4' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M39 33l15 10-15 10z' fill='%23f4efe4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css?v=4">
 </head>
 <body>
   <div id="loading" class="loading">正在载入阅读器…</div>
   <div id="app" class="app" hidden>
     <aside id="sidebar" class="sidebar">
       <div class="brand">
-        <span class="eyebrow">Interactive Media Reader</span>
-        <strong id="brandTitle">Media Reader</strong>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1f5a78"/><path d="M17 21h30M17 31h16M17 41h12" stroke="#f4efe4" stroke-width="6" stroke-linecap="round"/><path d="M39 33l15 10-15 10z" fill="#f4efe4"/></svg>
+        </span>
+        <div class="brand-text">
+          <span class="eyebrow">Media Reader</span>
+          <strong id="brandTitle">Media Reader</strong>
+        </div>
       </div>
       <nav id="chapterNav" aria-label="章节"></nav>
       <div class="sidebar-meta">
+        <span id="listenProgress"></span>
         <span id="sentenceCount"></span>
         <span id="alignmentStatus"></span>
       </div>
     </aside>
     <button id="sidebarHandle" class="panel-handle sidebar-handle" type="button" aria-controls="sidebar" aria-expanded="true" title="收起章节栏">
-      <span aria-hidden="true">‹</span><span class="sr-only">收起章节栏</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 9 12l5.5 6"/></svg>
+      <span class="sr-only">收起章节栏</span>
     </button>
 
     <main class="content">
       <header class="hero">
         <span class="eyebrow">READ · LISTEN · REPEAT</span>
         <h1 id="title"></h1>
+        <p id="heroMeta" class="hero-meta"></p>
         <p>点击任意原文句子，即可从该句开始播放。</p>
       </header>
       <div id="mediaStage" class="media-stage" hidden>
@@ -41,16 +50,31 @@
 
   <footer id="player" class="player" hidden>
     <audio id="audioFallback" preload="metadata"></audio>
-    <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="播放进度">
+    <div class="seek-wrap">
+      <div id="seekTicks" class="seek-ticks" aria-hidden="true"></div>
+      <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="播放进度">
+      <div id="seekBubble" class="seek-bubble" hidden></div>
+    </div>
     <div class="controls">
       <div class="control-group">
-        <button id="previous" type="button" title="上一句（Shift + ←）" aria-keyshortcuts="Shift+ArrowLeft">← 句</button>
-        <button id="back" type="button" title="后退 5 秒（←）" aria-keyshortcuts="ArrowLeft">−5s</button>
+        <button id="previous" type="button" aria-label="上一句" title="上一句（Shift + ←）" aria-keyshortcuts="Shift+ArrowLeft">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.5 5h2v14h-2z"/><path d="M18.5 6.2v11.6L9.7 12z"/></svg>
+        </button>
+        <button id="back" type="button" aria-label="后退 5 秒" title="后退 5 秒（←）" aria-keyshortcuts="ArrowLeft">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11a8.4 8.4 0 1 0 2.5-5.5L3.8 8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.8 3.4v4.8h4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><text x="12.2" y="15.6" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor">5</text></svg>
+        </button>
       </div>
-      <button id="play" class="play" type="button" aria-label="播放" title="播放/暂停（空格或 K）" aria-keyshortcuts="Space K">▶</button>
+      <button id="play" class="play" type="button" aria-label="播放" title="播放/暂停（空格或 K）" aria-keyshortcuts="Space K">
+        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.2 5.2v13.6L19 12z"/></svg>
+        <svg id="iconPause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden><path d="M7.2 5h3.3v14H7.2z"/><path d="M13.5 5h3.3v14h-3.3z"/></svg>
+      </button>
       <div class="control-group">
-        <button id="forward" type="button" title="前进 5 秒（→）" aria-keyshortcuts="ArrowRight">+5s</button>
-        <button id="next" type="button" title="下一句（Shift + →）" aria-keyshortcuts="Shift+ArrowRight">句 →</button>
+        <button id="forward" type="button" aria-label="前进 5 秒" title="前进 5 秒（→）" aria-keyshortcuts="ArrowRight">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 11a8.4 8.4 0 1 1-2.5-5.5L20.2 8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.2 3.4v4.8h-4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><text x="11.8" y="15.6" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor">5</text></svg>
+        </button>
+        <button id="next" type="button" aria-label="下一句" title="下一句（Shift + →）" aria-keyshortcuts="Shift+ArrowRight">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.5 5h2v14h-2z"/><path d="M5.5 6.2v11.6L14.3 12z"/></svg>
+        </button>
       </div>
       <span id="time" class="time">00:00 / 00:00</span>
       <label class="option">速度
@@ -64,11 +88,20 @@
       </label>
       <label class="toggle" title="循环当前句（R）"><input id="repeat" type="checkbox" aria-keyshortcuts="R"><span>循环当前句</span></label>
       <label class="toggle" title="自动跟随（A）"><input id="autoScroll" type="checkbox" checked aria-keyshortcuts="A"><span>自动跟随</span></label>
+      <div class="control-group settings-group">
+        <button id="fontSmaller" type="button" aria-label="减小正文字号" title="减小正文字号">A−</button>
+        <button id="fontLarger" type="button" aria-label="增大正文字号" title="增大正文字号">A+</button>
+        <button id="themeToggle" type="button" aria-label="切换深浅色模式" title="切换深浅色模式">
+          <svg id="iconMoon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.6 14.8A8.8 8.8 0 0 1 9.2 3.4a8.8 8.8 0 1 0 11.4 11.4z"/></svg>
+          <svg id="iconSun" viewBox="0 0 24 24" aria-hidden="true" hidden><circle cx="12" cy="12" r="4.1" fill="currentColor"/><path d="M12 2.6v2.3M12 19.1v2.3M2.6 12h2.3M19.1 12h2.3M5 5l1.6 1.6M17.4 17.4 19 19M19 5l-1.6 1.6M6.6 17.4 5 19" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <button id="shortcuts" class="shortcut-help" type="button" title="快捷键（?）" aria-haspopup="dialog" aria-keyshortcuts="?">快捷键&nbsp;?</button>
     </div>
   </footer>
   <button id="playerHandle" class="panel-handle player-handle" type="button" aria-controls="player" aria-expanded="true" title="收起播放栏" hidden>
-    <span aria-hidden="true">⌄</span><span class="sr-only">收起播放栏</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5 12 15l6-5.5"/></svg>
+    <span class="sr-only">收起播放栏</span>
   </button>
 
   <dialog id="shortcutDialog" class="shortcut-dialog" aria-labelledby="shortcutTitle">
@@ -97,6 +130,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="app.js?v=1" defer></script>
+  <script src="app.js?v=3" defer></script>
 </body>
 </html>

@@ -57,6 +57,12 @@ The default output is a sibling directory named `<media-stem>-reader`. Repeated 
 ./scripts/build.sh input.mp4 --output /absolute/path/to/output --open
 ```
 
+The display title is resolved in this order: `--title`, a yt-dlp sidecar (`<stem>.info.json` or a sibling `metadata.json` with a `title` field), then the cleaned filename. Downloaded media often has a mangled filename, so the sidecar usually wins:
+
+```bash
+./scripts/build.sh input.mp3 --title "10 Positive Habits That Will Rewire Your Mindset" --open
+```
+
 ## Supported playback formats
 
 The pipeline intentionally rejects media that FFmpeg can decode but the generated browser page cannot reliably play.
@@ -117,8 +123,8 @@ The repository contains no copyrighted media, generated transcript, model, virtu
 
 ## Current limitations
 
-- MLX backend means v0.1 supports Apple Silicon only
-- Explicit spoken chapter headings are detected; otherwise the output has one transcript chapter
+- MLX backend means Apple Silicon only for now
+- Spoken chapter heading detection ("Chapter 3", "Part two") is English-only; other languages get one transcript chapter
 - Very long readers render all sentence nodes at once
 - Arbitrary manuscripts and translations are deliberate non-goals
 

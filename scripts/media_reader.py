@@ -35,7 +35,7 @@ NUMBER_WORDS = {
     )
 }
 OUTRO_RE = re.compile(r"^(?:outro|conclusion)\b|(?:you(?:'ve| have)? reached the end)", re.I)
-GENERATOR_VERSION = "0.1.0"
+GENERATOR_VERSION = "0.2.0"
 ASR_PIPELINE_VERSION = 1
 REPAIR_PIPELINE_VERSION = 1
 PROJECT_MARKER = ".interactive-media-reader.json"
@@ -130,6 +130,27 @@ def clean_title(path: Path) -> str:
     return title or "Interactive Media Reader"
 
 
+def metadata_title(media: Path) -> str | None:
+    """Prefer a yt-dlp sidecar title over the often-mangled download filename."""
+    candidates = [media.with_suffix(".info.json"), media.with_name("metadata.json")]
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            title = str(payload.get("title") or payload.get("fulltitle") or "").strip()
+            if title:
+                return re.sub(r"\s+", " ", title)
+    return None
+
+
+def resolve_title(media: Path, override: str | None = None) -> str:
+    if override and override.strip():
+        return re.sub(r"\s+", " ", override).strip()
+    return metadata_title(media) or clean_title(media)
+
+
 def asr_cache_key(fingerprint: dict, model: str) -> dict:
     return {
         "pipelineVersion": ASR_PIPELINE_VERSION,
@@ -209,6 +230,42 @@ def make_sentence(words: list[dict], index: int) -> dict:
     }
 
 
+def collapse_adjacent_duplicates(words: list[str]) -> list[str]:
+    collapsed: list[str] = []
+    for word in words:
+        if collapsed and word.lower().strip(",.;:!?") == collapsed[-1].lower().strip(",.;:!?"):
+            continue
+        collapsed.append(word)
+    return collapsed
+
+
+def inline_subtitle(remainder: str) -> str | None:
+    """Extract a subtitle spoken in the same ASR sentence as the heading.
+
+    A short capitalized remainder is the whole subtitle ("Chapter 9 Cut what
+    drains your energy."). A longer remainder usually runs into narration, so
+    only its leading title-cased words are trusted.
+    """
+    words = remainder.split()
+    if not words:
+        return None
+    first_alpha = next((char for char in words[0] if char.isalpha()), "")
+    if not first_alpha.isupper():
+        return None
+    if len(words) <= 6:
+        return " ".join(collapse_adjacent_duplicates(words)).rstrip(".!?。！？,;:")
+    run = []
+    for word in words:
+        alpha = next((char for char in word if char.isalpha()), "")
+        if not alpha or not alpha.isupper():
+            break
+        run.append(word)
+    run = collapse_adjacent_duplicates(run)
+    if 2 <= len(run) <= 8:
+        return " ".join(run).rstrip(".!?。！？,;:")
+    return None
+
+
 def heading_title(sentences: list[dict], index: int) -> str:
     text = sentences[index]["text"].strip()
     match = HEADING_RE.search(text)
@@ -217,21 +274,34 @@ def heading_title(sentences: list[dict], index: int) -> str:
     raw_number = match.group("number").lower()
     number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
     heading = f"{match.group('kind').capitalize()} {number}"
-    # Only infer a subtitle when the spoken heading is a standalone sentence.
-    # If narration follows in the same ASR sentence, the title boundary is unknown.
-    if text[match.end():].strip(" .:—–-"):
-        return heading
-    additions = []
+    remainder = text[match.end():].strip(" .:—–-")
+    if remainder:
+        subtitle = inline_subtitle(remainder)
+        return f"{heading}: {subtitle}" if subtitle else heading
+    additions: list[str] = []
     previous_end = sentences[index]["end"]
     for following in sentences[index + 1:index + 3]:
         words = following["text"].split()
         if len(words) > 6 or following["start"] - previous_end > 2.0 or HEADING_RE.search(following["text"]):
             break
-        additions.append(following["text"].strip().rstrip(".!?。！？"))
+        addition = following["text"].strip().rstrip(".!?。！？")
         previous_end = following["end"]
+        # Narrators often speak the subtitle twice; keep one copy.
+        if any(existing.lower() == addition.lower() for existing in additions):
+            continue
+        additions.append(addition)
         if sum(len(item.split()) for item in additions) >= 7:
             break
-    return f"{heading}: {' '.join(additions)}" if additions else heading
+    if not additions:
+        return heading
+    subtitle = additions[0]
+    for addition in additions[1:]:
+        if len(addition.split()) == 1:
+            # A single-word ASR sentence ("Daily.") continues the phrase.
+            subtitle += f" {addition[0].lower()}{addition[1:]}"
+        else:
+            subtitle += f", {addition}"
+    return f"{heading}: {subtitle}"
 
 
 def detect_chapters(sentences: list[dict]) -> list[dict]:
@@ -298,9 +368,9 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     gap_quality = asr.get("gapRepair", {})
     repairs = int(gap_quality.get("repairedGaps", 0))
     language = asr.get("language", "unknown")
-    quality = f"{str(language).upper()} transcript · {confidence:.0%} ASR confidence"
+    quality = f"{str(language).upper()} 转写 · 置信度 {confidence:.0%}"
     if repairs:
-        quality += f" · {repairs} gaps repaired"
+        quality += f" · 修复断档 {repairs} 处"
     reader = {
         "version": 1,
         "generator": {
@@ -455,6 +525,7 @@ def main() -> None:
     parser.add_argument("media", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--model", default="mlx-community/whisper-large-v3-turbo")
+    parser.add_argument("--title", help="display title; defaults to a yt-dlp sidecar title, then the cleaned filename")
     parser.add_argument("--open", action="store_true", dest="open_preview")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
@@ -513,7 +584,7 @@ def main() -> None:
         repaired = json.loads(repaired_path.read_text(encoding="utf-8"))
         repaired["repairCacheKey"] = expected_repair_key
         atomic_json(repaired_path, repaired)
-    reader = build_reader(repaired, info, clean_title(media), media_url, public)
+    reader = build_reader(repaired, info, resolve_title(media, args.title), media_url, public)
     validate_output(output)
 
     url = None
@@ -524,6 +595,7 @@ def main() -> None:
         "valid": True,
         "input": str(media),
         "output": str(output),
+        "title": reader["title"],
         "mediaType": info["mediaType"],
         "language": reader["sourceLanguage"],
         "sentences": len(reader["sentences"]),

@@ -67,6 +67,50 @@ class MediaReaderTests(unittest.TestCase):
         self.assertEqual(chapters[1]["start"], 30)
         self.assertTrue(chapters[1]["title"].startswith("Chapter 1: Protect your focus"))
 
+    def test_heading_dedupes_repeated_spoken_subtitle(self):
+        sentences = [
+            {"text": "Chapter 8.", "start": 4380.2, "end": 4381.5},
+            {"text": "Learn one useful thing.", "start": 4382.2, "end": 4384.5},
+            {"text": "Learn one useful thing.", "start": 4384.9, "end": 4385.6},
+        ]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "Chapter 8: Learn one useful thing")
+
+    def test_heading_single_word_continuation_is_lowercased(self):
+        sentences = [
+            {"text": "Chapter 3.", "start": 1490.5, "end": 1491.7},
+            {"text": "Do one hard thing.", "start": 1492.4, "end": 1494.5},
+            {"text": "Daily.", "start": 1494.8, "end": 1495.5},
+        ]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "Chapter 3: Do one hard thing daily")
+
+    def test_heading_extracts_inline_subtitle(self):
+        sentences = [{"text": "Chapter 9 Cut what drains your energy.", "start": 4930.9, "end": 4934.9}]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "Chapter 9: Cut what drains your energy")
+
+    def test_heading_trims_inline_subtitle_before_narration(self):
+        sentences = [{"text": "Chapter 10 Build Consistency, Not Perfection Perfection is a trap.", "start": 5438.2, "end": 5445.5}]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "Chapter 10: Build Consistency, Not Perfection")
+
+    def test_heading_ignores_lowercase_inline_narration(self):
+        sentences = [{"text": "Chapter 2 is where things change.", "start": 10.0, "end": 12.0}]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "Chapter 2")
+
+    def test_resolve_title_prefers_sidecar_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "compressed-audio.mp3"
+            media.write_bytes(b"audio")
+            (Path(directory) / "metadata.json").write_text(
+                json.dumps({"title": "10 Positive Habits  That Stick"}), encoding="utf-8"
+            )
+            self.assertEqual(media_reader.resolve_title(media), "10 Positive Habits That Stick")
+            self.assertEqual(media_reader.resolve_title(media, "My Title"), "My Title")
+
+    def test_resolve_title_falls_back_to_cleaned_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "A useful talk [abcDEF_123].mp3"
+            media.write_bytes(b"audio")
+            self.assertEqual(media_reader.resolve_title(media), "A useful talk")
+
     def test_no_spoken_heading_uses_one_chapter(self):
         chapters = media_reader.detect_chapters([{"text": "Hello world.", "start": 0.2, "end": 1.0}])
         self.assertEqual([(item["start"], item["title"]) for item in chapters], [(0.0, "Transcript")])

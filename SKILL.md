@@ -22,7 +22,9 @@ The default output is a sibling directory named `<media-stem>-reader`. To avoid 
 ./scripts/build.sh "/absolute/path/to/media.mp3" --output "/absolute/path/to/output" --open
 ```
 
-The command prints a JSON summary containing the output path, sentence/chapter counts, repair count, and local URL. Report these concisely to the user.
+The command prints a JSON summary containing the resolved title, output path, sentence/chapter counts, repair count, and local URL. Report these concisely to the user.
+
+The display title resolves as `--title` > yt-dlp sidecar (`<stem>.info.json` or sibling `metadata.json`) > cleaned filename. When the filename is machine-generated (for example `compressed-audio.mp3`) and no sidecar exists, pass `--title` with a human-readable title instead of accepting the filename.
 
 ## Behavior
 

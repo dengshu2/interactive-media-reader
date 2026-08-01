@@ -30,6 +30,8 @@ class StaticAssetTests(unittest.TestCase):
             (ROOT / "assets" / name).read_text(encoding="utf-8")
             for name in ("index.html", "styles.css", "app.js")
         )
+        # The SVG XML namespace is an identifier, not a fetched resource.
+        combined = combined.replace("http://www.w3.org/2000/svg", "")
         self.assertNotIn("fonts.googleapis.com", combined)
         self.assertNotIn("https://", combined)
         self.assertNotIn("http://", combined)
