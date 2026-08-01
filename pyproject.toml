@@ -1,0 +1,20 @@
+[project]
+name = "interactive-media-reader"
+version = "0.1.0"
+description = "Build a same-language interactive transcript reader from one local media file."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "MIT"
+authors = [{ name = "dengshu2" }]
+dependencies = [
+  "mlx-whisper==0.4.3",
+  "numpy==2.4.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/dengshu2/interactive-media-reader"
+Repository = "https://github.com/dengshu2/interactive-media-reader"
+Issues = "https://github.com/dengshu2/interactive-media-reader/issues"
+
+[tool.uv]
+package = false

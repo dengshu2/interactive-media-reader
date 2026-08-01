@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Small static server with byte-range support for reliable audio seeking."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+from email.utils import formatdate
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+class RangeRequestHandler(SimpleHTTPRequestHandler):
+    byte_range: tuple[int, int] | None = None
+
+    def send_head(self):
+        path = self.translate_path(self.path)
+        if os.path.isdir(path):
+            return super().send_head()
+        try:
+            file = open(path, "rb")
+        except OSError:
+            self.send_error(404, "File not found")
+            return None
+
+        stat = os.fstat(file.fileno())
+        size = stat.st_size
+        start, end = 0, size - 1
+        status = 200
+        range_header = self.headers.get("Range")
+        if range_header:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if not match:
+                file.close()
+                self.send_error(416, "Invalid byte range")
+                return None
+            first, last = match.groups()
+            if first:
+                start = int(first)
+                end = min(int(last), size - 1) if last else size - 1
+            elif last:
+                length = min(int(last), size)
+                start, end = size - length, size - 1
+            if start > end or start >= size:
+                file.close()
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return None
+            status = 206
+            self.byte_range = (start, end)
+        else:
+            self.byte_range = None
+
+        self.send_response(status)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Last-Modified", formatdate(stat.st_mtime, usegmt=True))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        file.seek(start)
+        return file
+
+    def copyfile(self, source, outputfile):
+        if not self.byte_range:
+            return super().copyfile(source, outputfile)
+        start, end = self.byte_range
+        remaining = end - start + 1
+        while remaining:
+            chunk = source.read(min(128 * 1024, remaining))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            remaining -= len(chunk)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--directory", type=Path, default=Path.cwd())
+    args = parser.parse_args()
+    os.chdir(args.directory)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), RangeRequestHandler)
+    print(f"Reader: http://localhost:{args.port}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

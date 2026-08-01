@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4efe4">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'">
+  <title>Interactive Media Reader</title>
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+  <div id="loading" class="loading">正在载入阅读器…</div>
+  <div id="app" class="app" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <span class="eyebrow">Interactive Media Reader</span>
+        <strong id="brandTitle">Media Reader</strong>
+      </div>
+      <nav id="chapterNav" aria-label="章节"></nav>
+      <div class="sidebar-meta">
+        <span id="sentenceCount"></span>
+        <span id="alignmentStatus"></span>
+      </div>
+    </aside>
+    <button id="sidebarHandle" class="panel-handle sidebar-handle" type="button" aria-controls="sidebar" aria-expanded="true" title="收起章节栏">
+      <span aria-hidden="true">‹</span><span class="sr-only">收起章节栏</span>
+    </button>
+
+    <main class="content">
+      <header class="hero">
+        <span class="eyebrow">READ · LISTEN · REPEAT</span>
+        <h1 id="title"></h1>
+        <p>点击任意原文句子，即可从该句开始播放。</p>
+      </header>
+      <div id="mediaStage" class="media-stage" hidden>
+        <video id="media" preload="metadata" playsinline controls></video>
+      </div>
+      <article id="reader" class="reader"></article>
+    </main>
+  </div>
+
+  <footer id="player" class="player" hidden>
+    <audio id="audioFallback" preload="metadata"></audio>
+    <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="播放进度">
+    <div class="controls">
+      <div class="control-group">
+        <button id="previous" type="button" title="上一句（Shift + ←）" aria-keyshortcuts="Shift+ArrowLeft">← 句</button>
+        <button id="back" type="button" title="后退 5 秒（←）" aria-keyshortcuts="ArrowLeft">−5s</button>
+      </div>
+      <button id="play" class="play" type="button" aria-label="播放" title="播放/暂停（空格或 K）" aria-keyshortcuts="Space K">▶</button>
+      <div class="control-group">
+        <button id="forward" type="button" title="前进 5 秒（→）" aria-keyshortcuts="ArrowRight">+5s</button>
+        <button id="next" type="button" title="下一句（Shift + →）" aria-keyshortcuts="Shift+ArrowRight">句 →</button>
+      </div>
+      <span id="time" class="time">00:00 / 00:00</span>
+      <label class="option">速度
+        <select id="speed">
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <label class="toggle" title="循环当前句（R）"><input id="repeat" type="checkbox" aria-keyshortcuts="R"><span>循环当前句</span></label>
+      <label class="toggle" title="自动跟随（A）"><input id="autoScroll" type="checkbox" checked aria-keyshortcuts="A"><span>自动跟随</span></label>
+      <button id="shortcuts" class="shortcut-help" type="button" title="快捷键（?）" aria-haspopup="dialog" aria-keyshortcuts="?">快捷键&nbsp;?</button>
+    </div>
+  </footer>
+  <button id="playerHandle" class="panel-handle player-handle" type="button" aria-controls="player" aria-expanded="true" title="收起播放栏" hidden>
+    <span aria-hidden="true">⌄</span><span class="sr-only">收起播放栏</span>
+  </button>
+
+  <dialog id="shortcutDialog" class="shortcut-dialog" aria-labelledby="shortcutTitle">
+    <div class="dialog-card">
+      <header class="dialog-header">
+        <div>
+          <span class="eyebrow">KEYBOARD CONTROLS</span>
+          <h2 id="shortcutTitle">快捷键</h2>
+        </div>
+        <button id="closeShortcuts" class="dialog-close" type="button" aria-label="关闭快捷键说明">×</button>
+      </header>
+      <div class="shortcut-grid">
+        <span><kbd>Space</kbd> / <kbd>K</kbd></span><strong>播放 / 暂停</strong>
+        <span><kbd>←</kbd> / <kbd>→</kbd></span><strong>后退 / 前进 5 秒</strong>
+        <span><kbd>Shift</kbd> + <kbd>←</kbd></span><strong>上一句并播放</strong>
+        <span><kbd>Shift</kbd> + <kbd>→</kbd></span><strong>下一句并播放</strong>
+        <span><kbd>R</kbd></span><strong>循环当前句</strong>
+        <span><kbd>A</kbd></span><strong>自动跟随</strong>
+        <span><kbd>−</kbd> / <kbd>=</kbd></span><strong>降低 / 提高速度</strong>
+        <span><kbd>0</kbd></span><strong>恢复 1× 速度</strong>
+        <span><kbd>?</kbd></span><strong>显示快捷键</strong>
+        <span><kbd>Esc</kbd></span><strong>关闭窗口</strong>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js?v=1" defer></script>
+</body>
+</html>

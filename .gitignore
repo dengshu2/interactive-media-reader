@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated readers and processing artifacts
+*-reader/
+output/
+work/
+public/data/
+public/media/
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.ogg
+*.opus
+*.mp4
+*.m4v
+*.mov
+*.mkv
+*.webm
+
+# Runtime
+.server.json
+.server.pid
+server.log
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
