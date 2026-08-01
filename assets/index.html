@@ -2,12 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4efe4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'">
   <title>Interactive Media Reader</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f5a78'/%3E%3Cpath d='M17 21h30M17 31h16M17 41h12' stroke='%23f4efe4' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M39 33l15 10-15 10z' fill='%23f4efe4'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div id="loading" class="loading">正在载入阅读器…</div>
@@ -64,9 +64,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11a8.4 8.4 0 1 0 2.5-5.5L3.8 8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.8 3.4v4.8h4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><text x="12.2" y="15.6" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor">5</text></svg>
         </button>
       </div>
-      <button id="play" class="play" type="button" aria-label="播放" title="播放/暂停（空格或 K）" aria-keyshortcuts="Space K">
-        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.2 5.2v13.6L19 12z"/></svg>
-        <svg id="iconPause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden><path d="M7.2 5h3.3v14H7.2z"/><path d="M13.5 5h3.3v14h-3.3z"/></svg>
+      <button id="play" class="play" type="button" aria-label="播放" title="播放（空格或 K）" aria-keyshortcuts="Space K" data-state="paused">
+        <svg id="iconPlay" class="icon-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.2 5.2v13.6L19 12z"/></svg>
+        <svg id="iconPause" class="icon-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.2 5h3.3v14H7.2z"/><path d="M13.5 5h3.3v14h-3.3z"/></svg>
       </button>
       <div class="control-group">
         <button id="forward" type="button" aria-label="前进 5 秒" title="前进 5 秒（→）" aria-keyshortcuts="ArrowRight">
@@ -96,7 +96,10 @@
           <svg id="iconSun" viewBox="0 0 24 24" aria-hidden="true" hidden><circle cx="12" cy="12" r="4.1" fill="currentColor"/><path d="M12 2.6v2.3M12 19.1v2.3M2.6 12h2.3M19.1 12h2.3M5 5l1.6 1.6M17.4 17.4 19 19M19 5l-1.6 1.6M6.6 17.4 5 19" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
         </button>
       </div>
-      <button id="shortcuts" class="shortcut-help" type="button" title="快捷键（?）" aria-haspopup="dialog" aria-keyshortcuts="?">快捷键&nbsp;?</button>
+      <button id="shortcuts" class="shortcut-help" type="button" title="快捷键说明" aria-label="打开快捷键说明" aria-haspopup="dialog" aria-keyshortcuts="Shift+/">
+        <svg class="shortcut-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.8" y="5.2" width="18.4" height="13.6" rx="3"/><path d="M6.5 9h.01M10.2 9h.01M13.8 9h.01M17.5 9h.01M6.5 12.4h.01M10.2 12.4h.01M13.8 12.4h.01M17.5 12.4h.01M7.2 15.7h9.6"/></svg>
+        <span class="shortcut-label">快捷键</span>
+      </button>
     </div>
   </footer>
   <button id="playerHandle" class="panel-handle player-handle" type="button" aria-controls="player" aria-expanded="true" title="收起播放栏" hidden>
@@ -122,7 +125,7 @@
         <span><kbd>A</kbd></span><strong>自动跟随</strong>
         <span><kbd>−</kbd> / <kbd>=</kbd></span><strong>降低 / 提高速度</strong>
         <span><kbd>0</kbd></span><strong>恢复 1× 速度</strong>
-        <span><kbd>?</kbd></span><strong>显示快捷键</strong>
+        <span><kbd>Shift</kbd> + <kbd>/</kbd></span><strong>显示快捷键</strong>
         <span><kbd>Esc</kbd></span><strong>关闭窗口</strong>
       </div>
     </div>
@@ -130,6 +133,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="app.js?v=3" defer></script>
+  <script src="app.js?v=4" defer></script>
 </body>
 </html>

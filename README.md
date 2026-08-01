@@ -109,7 +109,7 @@ Long-form Whisper can skip speech after an incorrect timestamp jump. The pipelin
 - `A`: toggle auto-follow
 - `-` / `=`: playback speed
 - `0`: reset to 1×
-- `?`: shortcut help
+- `Shift + /` (`?`): shortcut help
 
 ## Development
 

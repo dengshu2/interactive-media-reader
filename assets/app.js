@@ -11,7 +11,8 @@ const sidebar = $('#sidebar');
 const player = $('#player');
 const sidebarHandle = $('#sidebarHandle');
 const playerHandle = $('#playerHandle');
-const layoutStorageKey = 'imr-layout';
+const compactLayoutQuery = window.matchMedia('(max-width: 900px)');
+const layoutStorageKey = `imr-layout-v2:${window.location.pathname}`;
 const themeStorageKey = 'imr-theme';
 const fontStorageKey = 'imr-font-size';
 const fontSizes = [16, 17.5, 19, 20.5, 22];
@@ -26,13 +27,30 @@ let toastTimer;
 let fontIndex = 2;
 let lastProgressSave = 0;
 let lastProgressLabel = '';
+let measuredPlayerHeight = 0;
+
+function readLayoutState() {
+  try {
+    const value = JSON.parse(localStorage.getItem(layoutStorageKey) || '{}');
+    return value && typeof value === 'object' ? value : {};
+  } catch (error) {
+    console.warn('Could not read layout state', error);
+    return {};
+  }
+}
+
+function layoutMode() {
+  return compactLayoutQuery.matches ? 'compact' : 'desktop';
+}
 
 function saveLayoutState() {
   try {
-    localStorage.setItem(layoutStorageKey, JSON.stringify({
+    const state = readLayoutState();
+    state[layoutMode()] = {
       sidebarCollapsed: document.body.classList.contains('sidebar-collapsed'),
       playerCollapsed: document.body.classList.contains('player-collapsed'),
-    }));
+    };
+    localStorage.setItem(layoutStorageKey, JSON.stringify(state));
   } catch (error) {
     console.warn('Could not save layout state', error);
   }
@@ -62,14 +80,18 @@ function setPlayerCollapsed(collapsed, persist = true) {
 }
 
 function restoreLayoutState() {
-  let state = {};
-  try {
-    state = JSON.parse(localStorage.getItem(layoutStorageKey) || '{}');
-  } catch (error) {
-    console.warn('Could not restore layout state', error);
-  }
+  const state = readLayoutState()[layoutMode()] || {};
   setSidebarCollapsed(Boolean(state.sidebarCollapsed), false);
   setPlayerCollapsed(Boolean(state.playerCollapsed), false);
+}
+
+function updatePlayerHeight() {
+  if (player.hidden) return;
+  const height = Math.ceil(player.getBoundingClientRect().height);
+  if (height > 0 && height !== measuredPlayerHeight) {
+    measuredPlayerHeight = height;
+    document.documentElement.style.setProperty('--player-height', `${height}px`);
+  }
 }
 
 function formatTime(seconds) {
@@ -158,9 +180,20 @@ function update() {
   if (!audio.paused) rafId = requestAnimationFrame(update);
 }
 
-function togglePlayback() {
-  if (audio.paused) audio.play().catch(console.error);
-  else audio.pause();
+async function togglePlayback() {
+  if (!audio.paused && !audio.ended) {
+    audio.pause();
+    setPlayIcon(false);
+    return;
+  }
+  if (audio.ended) audio.currentTime = 0;
+  try {
+    await audio.play();
+    setPlayIcon(!audio.paused && !audio.ended);
+  } catch (error) {
+    setPlayIcon(false);
+    console.error(error);
+  }
 }
 
 function showToast(message) {
@@ -365,12 +398,14 @@ function render() {
 
   audio = data.mediaType === 'video' ? mediaVideo : audioFallback;
   audio.src = data.mediaUrl || data.audioUrl;
+  setPlayIcon(false);
   audio.addEventListener('loadedmetadata', restoreProgress, { once: true });
   $('#mediaStage').hidden = data.mediaType !== 'video';
   $('#loading').hidden = true;
   $('#app').hidden = false;
   player.hidden = false;
   playerHandle.hidden = false;
+  requestAnimationFrame(updatePlayerHeight);
 }
 
 async function init() {
@@ -386,23 +421,33 @@ async function init() {
 }
 
 function setPlayIcon(playing) {
-  $('#iconPlay').hidden = playing;
-  $('#iconPause').hidden = !playing;
+  playButton.classList.toggle('is-playing', playing);
+  playButton.dataset.state = playing ? 'playing' : 'paused';
   playButton.setAttribute('aria-label', playing ? '暂停' : '播放');
+  playButton.title = `${playing ? '暂停' : '播放'}（空格或 K）`;
 }
 
 playButton.addEventListener('click', togglePlayback);
 mediaElements.forEach((element) => {
-  element.addEventListener('play', () => {
-    setPlayIcon(true);
+  const syncPlaying = () => {
+    if (element !== audio) return;
+    setPlayIcon(!element.paused && !element.ended);
     cancelAnimationFrame(rafId);
     update();
-  });
-  element.addEventListener('pause', () => {
+  };
+  const syncPaused = () => {
+    if (element !== audio) return;
     setPlayIcon(false);
     if (data) saveProgress(audio.currentTime);
     cancelAnimationFrame(rafId);
     update();
+  };
+  element.addEventListener('play', syncPlaying);
+  element.addEventListener('playing', syncPlaying);
+  element.addEventListener('pause', syncPaused);
+  element.addEventListener('ended', syncPaused);
+  element.addEventListener('emptied', () => {
+    if (element === audio) setPlayIcon(false);
   });
   element.addEventListener('loadedmetadata', update);
   element.addEventListener('seeked', update);
@@ -530,6 +575,14 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => {
   if (data) saveProgress(audio.currentTime);
 });
+window.addEventListener('resize', updatePlayerHeight);
+compactLayoutQuery.addEventListener('change', () => {
+  restoreLayoutState();
+  requestAnimationFrame(updatePlayerHeight);
+});
+if ('ResizeObserver' in window) {
+  new ResizeObserver(updatePlayerHeight).observe(player);
+}
 
 restoreLayoutState();
 init();

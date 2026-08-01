@@ -40,6 +40,26 @@ class StaticAssetTests(unittest.TestCase):
         script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn("span.textContent = sentence.text", script)
 
+    def test_play_button_has_distinct_css_states(self):
+        html = (ROOT / "assets" / "index.html").read_text(encoding="utf-8")
+        styles = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
+        script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="icon-play"', html)
+        self.assertIn('class="icon-pause"', html)
+        self.assertIn(".play.is-playing .icon-play", styles)
+        self.assertIn("playButton.classList.toggle('is-playing', playing)", script)
+        self.assertIn("element.addEventListener('playing', syncPlaying)", script)
+
+    def test_mobile_controls_use_icons_and_measured_player_height(self):
+        html = (ROOT / "assets" / "index.html").read_text(encoding="utf-8")
+        styles = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
+        script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="shortcut-icon"', html)
+        self.assertNotIn('content: "?"', styles)
+        self.assertIn("env(safe-area-inset-bottom)", styles)
+        self.assertIn("ResizeObserver", script)
+        self.assertIn("imr-layout-v2:", script)
+
 
 if __name__ == "__main__":
     unittest.main()

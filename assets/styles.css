@@ -35,6 +35,7 @@
   --toast-ink: #f4f7f7;
   --sidebar-width: 278px;
   --player-height: 106px;
+  --player-min-height: 106px;
   --player-offset: var(--player-height);
   --measure: 880px;
 }
@@ -167,7 +168,7 @@ body.sidebar-collapsed .sidebar { transform: translateX(-100%); opacity: 0; poin
 body.sidebar-collapsed .content { width: 100%; margin-left: 0; }
 body.player-collapsed { --player-offset: 0px; }
 .hero { width: min(100%, var(--measure)); margin: 0 auto 72px; }
-.hero h1 { max-width: 860px; margin: 15px 0 14px; font: 600 clamp(34px, 5vw, 56px)/1.08 "Literata", Georgia, serif; letter-spacing: -.04em; }
+.hero h1 { max-width: 860px; margin: 15px 0 14px; overflow-wrap: anywhere; font: 600 clamp(34px, 5vw, 56px)/1.08 "Literata", Georgia, serif; letter-spacing: -.04em; }
 .hero p { color: var(--muted); font-size: 16px; }
 .hero-meta { margin: 0 0 6px; font-size: 13px; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
 .media-stage {
@@ -208,8 +209,8 @@ body.player-collapsed { --player-offset: 0px; }
   position: fixed;
   z-index: 10;
   inset: auto 0 0;
-  min-height: var(--player-height);
-  padding: 14px clamp(18px, 4vw, 60px) 16px;
+  min-height: var(--player-min-height);
+  padding: 14px max(clamp(18px, 4vw, 60px), env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(clamp(18px, 4vw, 60px), env(safe-area-inset-left));
   border-top: 1px solid var(--player-line);
   color: var(--player-ink);
   background: var(--player-bg);
@@ -262,13 +263,17 @@ body.player-collapsed .player { transform: translateY(100%); opacity: 0; pointer
 .controls button svg { display: block; width: 20px; height: 20px; }
 .controls .play { width: 50px; height: 50px; border: 0; color: var(--play-ink); background: var(--play-bg); }
 .controls .play svg { width: 24px; height: 24px; }
+.controls .play .icon-pause { display: none; }
+.controls .play.is-playing .icon-play { display: none; }
+.controls .play.is-playing .icon-pause { display: block; }
 .time { min-width: 118px; color: var(--player-muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .option, .toggle { display: flex; align-items: center; gap: 7px; color: var(--player-muted); font-size: 12px; white-space: nowrap; }
 .option select { padding: 5px; border: 1px solid var(--player-line); border-radius: 5px; color: var(--player-ink); background: var(--select-bg); }
 .toggle input { accent-color: var(--player-accent); }
 .settings-group { border-left: 1px solid var(--player-line); padding-left: clamp(10px, 2vw, 24px); }
 .settings-group button { font-size: 13px; }
-.controls .shortcut-help { width: auto; padding-inline: 13px; color: var(--player-ink); font-size: 13px; }
+.controls .shortcut-help { display: flex; width: auto; padding-inline: 13px; gap: 7px; color: var(--player-ink); font-size: 13px; }
+.controls .shortcut-help .shortcut-icon { width: 19px; height: 19px; flex: 0 0 auto; }
 
 .panel-handle {
   position: fixed;
@@ -311,7 +316,9 @@ body.player-collapsed .player-handle { bottom: 12px; }
 
 .shortcut-dialog {
   width: min(92vw, 570px);
+  max-height: calc(100dvh - 32px);
   padding: 0;
+  overflow: auto;
   border: 1px solid var(--handle-border);
   border-radius: 18px;
   color: var(--ink);
@@ -369,10 +376,12 @@ kbd {
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 
 @media (max-width: 900px) {
-  :root { --player-height: 142px; }
-  .sidebar { position: static; width: auto; height: auto; padding: 20px; border-right: 0; border-bottom: 1px solid var(--line); }
+  :root { --player-height: 142px; --player-min-height: 142px; }
+  .sidebar { position: static; width: auto; height: auto; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 20px max(20px, env(safe-area-inset-left)); border-right: 0; border-bottom: 1px solid var(--line); }
   body.sidebar-collapsed .sidebar { display: none; }
-  .sidebar-handle, body.sidebar-collapsed .sidebar-handle { top: 18px; right: 18px; left: auto; }
+  .sidebar-handle, body.sidebar-collapsed .sidebar-handle { top: max(18px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); left: auto; }
+  .sidebar-handle svg { transform: rotate(90deg); }
+  .sidebar-handle[aria-expanded="false"] svg { transform: rotate(-90deg); }
   .brand { padding-bottom: 15px; }
   #chapterNav { display: flex; gap: 6px; padding: 12px 0 0; overflow-x: auto; }
   .chapter-link { min-width: 170px; }
@@ -385,16 +394,27 @@ kbd {
 }
 
 @media (max-width: 560px) {
-  :root { --player-height: 132px; --copy-default: 17px; }
-  .content { padding-inline: 22px; }
-  .hero h1 { font-size: 39px; }
+  :root { --player-height: 132px; --player-min-height: 132px; --copy-default: 17px; }
+  .content { padding-left: max(22px, env(safe-area-inset-left)); padding-right: max(22px, env(safe-area-inset-right)); }
+  .hero h1 { font-size: clamp(30px, 10vw, 39px); }
   .chapter-copy { line-height: 1.85; }
-  .time, .option { order: 2; }
-  .controls .play { width: 45px; height: 45px; }
+  .player { padding-top: 11px; padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .seek-wrap { margin-bottom: 10px; }
+  .controls { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px 0; width: 100%; }
+  .controls > .control-group:first-child { grid-area: 1 / 4 / 2 / span 2; justify-self: center; }
+  .controls > .play { grid-area: 1 / 6 / 2 / span 2; justify-self: center; }
+  .controls > .control-group:nth-child(3) { grid-area: 1 / 8 / 2 / span 2; justify-self: center; }
+  .time { grid-area: 2 / 1 / 3 / span 4; min-width: 0; justify-self: center; font-size: 11px; }
+  .option { grid-area: 2 / 5 / 3 / span 4; justify-self: center; }
+  .settings-group { grid-area: 2 / 9 / 3 / span 2; justify-self: center; }
+  .shortcut-help { grid-area: 2 / 11 / 3 / span 2; justify-self: center; }
+  .controls .play { width: 46px; height: 46px; }
   #back, #forward, #fontSmaller, #fontLarger { display: none; }
-  .controls .shortcut-help { padding-inline: 10px; font-size: 0; }
-  .controls .shortcut-help::after { content: "?"; font-size: 14px; }
+  .controls .shortcut-help { width: 42px; padding-inline: 0; }
+  .shortcut-label { display: none; }
   .dialog-card { padding: 23px 20px 25px; }
-  .shortcut-grid { grid-template-columns: 1fr 1.15fr; gap: 11px 14px; }
+  .shortcut-grid { grid-template-columns: minmax(120px, .9fr) 1.15fr; gap: 11px 14px; }
   .shortcut-grid strong { font-size: 13px; }
+  .shortcut-grid span { white-space: normal; }
+  kbd { min-width: 27px; padding-inline: 6px; }
 }
