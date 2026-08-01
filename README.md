@@ -16,16 +16,16 @@ The required input is exactly one local media path.
 
 ## Requirements
 
-- macOS on Apple Silicon
 - Python 3.11 or 3.12
 - [FFmpeg](https://ffmpeg.org/)
 - `uv` recommended (plain `venv`/`pip` is used as a fallback)
 
 ```bash
-brew install ffmpeg uv
+brew install ffmpeg uv        # macOS
+sudo apt install ffmpeg       # Debian/Ubuntu
 ```
 
-The first run installs a pinned MLX Whisper environment under `~/.cache/interactive-media-reader/venv` and downloads `mlx-community/whisper-large-v3-turbo` from Hugging Face. Expect several gigabytes of local cache in total.
+The ASR engine is selected per platform: Apple Silicon uses MLX Whisper (`mlx-community/whisper-large-v3-turbo`); every other platform uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`large-v3-turbo`, CUDA is used automatically when available). The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the model from Hugging Face. Expect several gigabytes of local cache in total.
 
 ## Install as an Agent Skill
 
@@ -123,8 +123,8 @@ The repository contains no copyrighted media, generated transcript, model, virtu
 
 ## Current limitations
 
-- MLX backend means Apple Silicon only for now
-- Spoken chapter heading detection ("Chapter 3", "Part two") is English-only; other languages get one transcript chapter
+- Spoken chapter heading detection covers English ("Chapter 3", "Part two") and Chinese ("第三章", "第二十五章"); other languages get one transcript chapter
+- The faster-whisper backend is adapter-smoke-tested; the reference pipeline runs on Apple Silicon MLX
 - Very long readers render all sentence nodes at once
 - Arbitrary manuscripts and translations are deliberate non-goals
 

@@ -1,13 +1,17 @@
 [project]
 name = "interactive-media-reader"
-version = "0.2.0"
+version = "0.3.0"
 description = "Build a same-language interactive transcript reader from one local media file."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
 authors = [{ name = "dengshu2" }]
 dependencies = [
-  "mlx-whisper==0.4.3",
+  "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "faster-whisper==1.2.0; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  # faster-whisper 1.2.0 imports requests but stopped receiving it transitively
+  # once huggingface-hub 1.x dropped the dependency.
+  "requests==2.32.5; sys_platform != 'darwin' or platform_machine != 'arm64'",
   "numpy==2.4.6",
 ]
 

@@ -115,6 +115,41 @@ class MediaReaderTests(unittest.TestCase):
         chapters = media_reader.detect_chapters([{"text": "Hello world.", "start": 0.2, "end": 1.0}])
         self.assertEqual([(item["start"], item["title"]) for item in chapters], [(0.0, "Transcript")])
 
+    def test_parse_cjk_number(self):
+        for text, expected in (("3", 3), ("１２", 12), ("一", 1), ("两", 2), ("十", 10), ("十一", 11), ("二十", 20), ("二十五", 25), ("九十九", 99)):
+            self.assertEqual(media_reader.parse_cjk_number(text), expected, text)
+        self.assertIsNone(media_reader.parse_cjk_number("abc"))
+
+    def test_chinese_heading_with_inline_subtitle(self):
+        sentences = [{"text": "第九章 剪除消耗你能量的东西。", "start": 100.0, "end": 104.0}]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "第九章: 剪除消耗你能量的东西")
+
+    def test_chinese_heading_long_narration_kept_bare(self):
+        sentences = [{"text": "第十章我们要讨论的内容涉及很多方面而且没有空格分隔的副标题。", "start": 100.0, "end": 104.0}]
+        self.assertEqual(media_reader.heading_title(sentences, 0), "第十章")
+
+    def test_chinese_chapters_detected_with_localized_labels(self):
+        sentences = [
+            {"text": "欢迎收听。", "start": 0.2, "end": 1.0},
+            {"text": "第一章 早晨的力量。", "start": 30.0, "end": 33.0},
+            {"text": "正文内容。", "start": 34.0, "end": 36.0},
+            {"text": "第二十五章 坚持的意义。", "start": 90.0, "end": 93.0},
+            {"text": "结语。", "start": 150.0, "end": 151.0},
+        ]
+        chapters = media_reader.detect_chapters(sentences, "zh")
+        self.assertEqual(
+            [item["title"] for item in chapters],
+            ["引言", "第一章: 早晨的力量", "第二十五章: 坚持的意义", "结语"],
+        )
+
+    def test_cache_key_includes_non_default_backend(self):
+        fingerprint = {"sha256": "abc"}
+        mlx_key = media_reader.asr_cache_key(fingerprint, "model-a")
+        faster_key = media_reader.asr_cache_key(fingerprint, "model-a", "faster-whisper")
+        self.assertNotIn("backend", mlx_key)
+        self.assertEqual(faster_key["backend"], "faster-whisper")
+        self.assertNotEqual(mlx_key, faster_key)
+
     def test_non_reader_directory_is_protected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

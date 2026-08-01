@@ -34,8 +34,15 @@ NUMBER_WORDS = {
         "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty".split()
     )
 }
-OUTRO_RE = re.compile(r"^(?:outro|conclusion)\b|(?:you(?:'ve| have)? reached the end)", re.I)
-GENERATOR_VERSION = "0.2.0"
+CJK_HEADING_RE = re.compile(
+    r"^第\s*(?P<number>[0-9０-９]{1,4}|[零一二两三四五六七八九十]{1,4})\s*(?P<kind>章|部分|回|节|節|课|課|讲|講|篇)"
+)
+CJK_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+CJK_RE = re.compile(r"[一-鿿]")
+OUTRO_RE = re.compile(r"^(?:outro|conclusion)\b|(?:you(?:'ve| have)? reached the end)|^(?:结语|結語|尾声|尾聲|结论|結論|总结|總結)", re.I)
+CHAPTER_LABELS_ZH = {"Introduction": "引言", "Conclusion": "结语", "Transcript": "全文"}
+GENERATOR_VERSION = "0.3.0"
 ASR_PIPELINE_VERSION = 1
 REPAIR_PIPELINE_VERSION = 1
 PROJECT_MARKER = ".interactive-media-reader.json"
@@ -151,13 +158,18 @@ def resolve_title(media: Path, override: str | None = None) -> str:
     return metadata_title(media) or clean_title(media)
 
 
-def asr_cache_key(fingerprint: dict, model: str) -> dict:
-    return {
+def asr_cache_key(fingerprint: dict, model: str, backend: str = "mlx") -> dict:
+    key = {
         "pipelineVersion": ASR_PIPELINE_VERSION,
         "model": model,
         "options": TRANSCRIBE_OPTIONS,
         "source": fingerprint,
     }
+    # The mlx key shape predates multi-backend support; keep it unchanged so
+    # existing caches stay valid.
+    if backend != "mlx":
+        key["backend"] = backend
+    return key
 
 
 def repair_cache_key(asr: dict, model: str) -> dict:
@@ -169,8 +181,8 @@ def repair_cache_key(asr: dict, model: str) -> dict:
     }
 
 
-def transcribe(media: Path, output: Path, fingerprint: dict, model: str) -> dict:
-    expected_cache_key = asr_cache_key(fingerprint, model)
+def transcribe(media: Path, output: Path, fingerprint: dict, model: str, backend: str) -> dict:
+    expected_cache_key = asr_cache_key(fingerprint, model, backend)
     if output.exists():
         cached = json.loads(output.read_text(encoding="utf-8"))
         if cached.get("cacheKey") == expected_cache_key:
@@ -180,16 +192,17 @@ def transcribe(media: Path, output: Path, fingerprint: dict, model: str) -> dict
         output.unlink()
 
     try:
-        import mlx_whisper
+        from asr_backends import transcribe_file
     except ImportError as error:
-        raise RuntimeError("MLX Whisper is not installed; rerun through scripts/build.sh") from error
+        raise RuntimeError("ASR backend is unavailable; rerun through scripts/build.sh") from error
 
-    print(f"Transcribing {media.name} with {model}", flush=True)
-    result = mlx_whisper.transcribe(
-        str(media),
-        path_or_hf_repo=model,
-        verbose=False,
-        **TRANSCRIBE_OPTIONS,
+    print(f"Transcribing {media.name} with {model} ({backend})", flush=True)
+    result = transcribe_file(
+        media,
+        model,
+        condition_on_previous_text=TRANSCRIBE_OPTIONS["condition_on_previous_text"],
+        hallucination_silence_threshold=TRANSCRIBE_OPTIONS["hallucination_silence_threshold"],
+        backend=backend,
     )
     result["model"] = model
     result["cacheKey"] = expected_cache_key
@@ -230,6 +243,50 @@ def make_sentence(words: list[dict], index: int) -> dict:
     }
 
 
+def parse_cjk_number(text: str) -> int | None:
+    normalized = text.translate(FULLWIDTH_DIGITS)
+    if normalized.isdigit():
+        return int(normalized)
+    if "十" in text:
+        tens, _, units = text.partition("十")
+        if (tens and tens not in CJK_DIGITS) or (units and units not in CJK_DIGITS):
+            return None
+        return (CJK_DIGITS[tens] if tens else 1) * 10 + (CJK_DIGITS[units] if units else 0)
+    if len(text) == 1 and text in CJK_DIGITS:
+        return CJK_DIGITS[text]
+    return None
+
+
+def parse_heading(text: str) -> dict | None:
+    """Match a spoken chapter heading in English or Chinese.
+
+    Returns the dedup key parts (kind, number), a display label preserving the
+    spoken number form, and the match end for subtitle extraction.
+    """
+    match = HEADING_RE.search(text)
+    if match:
+        raw_number = match.group("number").lower()
+        number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
+        return {
+            "kind": match.group("kind").lower(),
+            "number": number,
+            "label": f"{match.group('kind').capitalize()} {number}",
+            "end": match.end(),
+        }
+    match = CJK_HEADING_RE.search(text)
+    if match:
+        number = parse_cjk_number(match.group("number"))
+        if number is None:
+            return None
+        return {
+            "kind": match.group("kind"),
+            "number": number,
+            "label": f"第{match.group('number')}{match.group('kind')}",
+            "end": match.end(),
+        }
+    return None
+
+
 def collapse_adjacent_duplicates(words: list[str]) -> list[str]:
     collapsed: list[str] = []
     for word in words:
@@ -246,6 +303,12 @@ def inline_subtitle(remainder: str) -> str | None:
     drains your energy."). A longer remainder usually runs into narration, so
     only its leading title-cased words are trusted.
     """
+    if CJK_RE.search(remainder):
+        # No capitalization signal in CJK: a short remainder (or short leading
+        # space-separated token) is the subtitle; anything longer is narration.
+        token = remainder.split()[0] if remainder.split() else ""
+        token = token.rstrip("。！？.!?，,;：:、")
+        return token if 0 < len(token) <= 12 else None
     words = remainder.split()
     if not words:
         return None
@@ -268,13 +331,11 @@ def inline_subtitle(remainder: str) -> str | None:
 
 def heading_title(sentences: list[dict], index: int) -> str:
     text = sentences[index]["text"].strip()
-    match = HEADING_RE.search(text)
-    if not match:
+    parsed = parse_heading(text)
+    if not parsed:
         return text.rstrip(".!?。！？")
-    raw_number = match.group("number").lower()
-    number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
-    heading = f"{match.group('kind').capitalize()} {number}"
-    remainder = text[match.end():].strip(" .:—–-")
+    heading = parsed["label"]
+    remainder = text[parsed["end"]:].strip(" .:：，、—–-。！？　")
     if remainder:
         subtitle = inline_subtitle(remainder)
         return f"{heading}: {subtitle}" if subtitle else heading
@@ -282,9 +343,9 @@ def heading_title(sentences: list[dict], index: int) -> str:
     previous_end = sentences[index]["end"]
     for following in sentences[index + 1:index + 3]:
         words = following["text"].split()
-        if len(words) > 6 or following["start"] - previous_end > 2.0 or HEADING_RE.search(following["text"]):
+        if len(words) > 6 or following["start"] - previous_end > 2.0 or parse_heading(following["text"].strip()):
             break
-        addition = following["text"].strip().rstrip(".!?。！？")
+        addition = following["text"].strip().rstrip(".!?。！？，,")
         previous_end = following["end"]
         # Narrators often speak the subtitle twice; keep one copy.
         if any(existing.lower() == addition.lower() for existing in additions):
@@ -304,31 +365,30 @@ def heading_title(sentences: list[dict], index: int) -> str:
     return f"{heading}: {subtitle}"
 
 
-def detect_chapters(sentences: list[dict]) -> list[dict]:
+def detect_chapters(sentences: list[dict], language: str = "") -> list[dict]:
+    labels = CHAPTER_LABELS_ZH if str(language).startswith("zh") else {}
     boundaries: list[tuple[float, str]] = []
     # Long-form narration may preview a chapter before speaking its real heading.
     # Keep the final occurrence of each explicit chapter/part number.
     by_heading = {}
     for index, item in enumerate(sentences):
-        match = HEADING_RE.search(item["text"].strip())
-        if not match:
+        parsed = parse_heading(item["text"].strip())
+        if not parsed:
             continue
-        raw_number = match.group("number").lower()
-        number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
-        by_heading[(match.group("kind").lower(), number)] = (index, item)
+        by_heading[(parsed["kind"], parsed["number"])] = (index, item)
     headings = sorted(by_heading.values(), key=lambda pair: pair[1]["start"])
     if headings:
         first_start = headings[0][1]["start"]
         if first_start > 8:
-            boundaries.append((0.0, "Introduction"))
+            boundaries.append((0.0, labels.get("Introduction", "Introduction")))
         for index, item in headings:
             boundaries.append((item["start"], heading_title(sentences, index)))
         for item in sentences:
             if OUTRO_RE.search(item["text"].strip()) and item["start"] > boundaries[-1][0] + 30:
-                boundaries.append((item["start"], "Conclusion"))
+                boundaries.append((item["start"], labels.get("Conclusion", "Conclusion")))
                 break
     else:
-        boundaries.append((0.0, "Transcript"))
+        boundaries.append((0.0, labels.get("Transcript", "Transcript")))
 
     deduplicated = []
     for start, title in sorted(boundaries):
@@ -353,7 +413,8 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     sentences = timed_sentences(asr)
     if not sentences:
         raise RuntimeError("Transcription produced no timed sentences")
-    chapters = detect_chapters(sentences)
+    language = asr.get("language", "unknown")
+    chapters = detect_chapters(sentences, str(language or ""))
     starts = [chapter["start"] for chapter in chapters]
     counts = [0] * len(chapters)
     for sentence in sentences:
@@ -367,7 +428,6 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     confidence = sum(item["confidence"] * item["wordCount"] for item in sentences) / word_count
     gap_quality = asr.get("gapRepair", {})
     repairs = int(gap_quality.get("repairedGaps", 0))
-    language = asr.get("language", "unknown")
     quality = f"{str(language).upper()} 转写 · 置信度 {confidence:.0%}"
     if repairs:
         quality += f" · 修复断档 {repairs} 处"
@@ -524,7 +584,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("media", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--model", default="mlx-community/whisper-large-v3-turbo")
+    parser.add_argument("--model", help="Whisper model; defaults per backend (MLX turbo on Apple Silicon, large-v3-turbo elsewhere)")
     parser.add_argument("--title", help="display title; defaults to a yt-dlp sidecar title, then the cleaned filename")
     parser.add_argument("--open", action="store_true", dest="open_preview")
     parser.add_argument("--validate-only", action="store_true")
@@ -541,6 +601,9 @@ def main() -> None:
 
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         raise RuntimeError("ffmpeg and ffprobe are required")
+    from asr_backends import backend_name, default_model
+    backend = backend_name()
+    model = args.model or default_model(backend)
     info = probe_media(media)
     if media.suffix.lower() not in BROWSER_CONTAINERS or not info["codecCompatible"]:
         codecs = "/".join(filter(None, [info.get("videoCodec"), info.get("audioCodec")]))
@@ -555,9 +618,9 @@ def main() -> None:
     asr_path = output / "work" / "asr.json"
     repaired_path = output / "work" / "asr-repaired.json"
     report_path = output / "work" / "gap-repair-report.json"
-    asr = transcribe(media, asr_path, fingerprint, args.model)
+    asr = transcribe(media, asr_path, fingerprint, model, backend)
 
-    expected_repair_key = repair_cache_key(asr, args.model)
+    expected_repair_key = repair_cache_key(asr, model)
     repaired = None
     if repaired_path.exists():
         candidate = json.loads(repaired_path.read_text(encoding="utf-8"))
@@ -577,7 +640,7 @@ def main() -> None:
                 str(repaired_path),
                 str(report_path),
                 "--model",
-                args.model,
+                model,
             ],
             check=True,
         )
@@ -596,6 +659,8 @@ def main() -> None:
         "input": str(media),
         "output": str(output),
         "title": reader["title"],
+        "backend": backend,
+        "model": model,
         "mediaType": info["mediaType"],
         "language": reader["sourceLanguage"],
         "sentences": len(reader["sentences"]),

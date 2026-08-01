@@ -42,7 +42,7 @@ def transcribe_region(
     context_seconds: float = 3.0,
 ) -> list[dict]:
     """Transcribe a region in short windows and return non-overlapping timed words."""
-    import mlx_whisper
+    from asr_backends import transcribe_file
 
     span = max(0.01, end - start)
     part_count = max(1, math.ceil(span / owner_seconds))
@@ -56,15 +56,12 @@ def transcribe_region(
         clip_end = owner_end + context_seconds
         clip_path = temporary_directory / f"clip-{start:.3f}-{part}.wav"
         extract_clip(audio, clip_path, clip_start, clip_end)
-        result = mlx_whisper.transcribe(
-            str(clip_path),
-            path_or_hf_repo=model,
+        result = transcribe_file(
+            clip_path,
+            model,
             language=language,
-            task="transcribe",
-            word_timestamps=True,
             condition_on_previous_text=False,
             hallucination_silence_threshold=None,
-            verbose=None,
         )
         for segment in result.get("segments", []):
             for word in segment.get("words", []):
@@ -171,7 +168,7 @@ def main() -> None:
     parser.add_argument("asr", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("report", type=Path)
-    parser.add_argument("--model", default="mlx-community/whisper-large-v3-turbo")
+    parser.add_argument("--model", help="Whisper model; defaults to the current backend's standard model")
     parser.add_argument("--min-gap", type=float, default=1.5)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -179,6 +176,10 @@ def main() -> None:
     if args.output.exists() and not args.force:
         print(f"Repaired ASR already exists: {args.output}")
         return
+
+    if not args.model:
+        from asr_backends import default_model
+        args.model = default_model()
 
     source = json.loads(args.asr.read_text(encoding="utf-8"))
     segments = sorted(source.get("segments", []), key=lambda item: float(item["start"]))
