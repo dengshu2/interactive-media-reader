@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 from email.utils import formatdate
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
