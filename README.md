@@ -4,6 +4,14 @@ Turn one local audio or video file into a same-language, clickable transcript re
 
 把一个本地音频或视频文件转换成同语言的交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。**仅支持英语及其他欧洲语言，不支持中文。**
 
+> **Upgrading from 0.3.x**
+>
+> 0.4.0 replaces Whisper with Parakeet TDT and **drops Chinese and every other non-European language**. If you use this on CJK media, stay on [v0.3.2](https://github.com/dengshu2/interactive-media-reader/releases/tag/v0.3.2).
+>
+> Existing outputs keep working, but the next build re-transcribes from scratch: the ASR cache key changed, and `work/asr-repaired.json` and `work/gap-repair-report.json` are no longer produced.
+>
+> 0.4.0 起改用 Parakeet TDT，**移除中文及所有非欧洲语言支持**。需要处理中文素材请停留在 v0.3.2。
+
 ## Scope
 
 The required input is exactly one local media path.
@@ -30,7 +38,16 @@ sudo apt install ffmpeg       # Debian/Ubuntu
 
 Transcription runs NVIDIA [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) on every platform — the int8 build is CPU-only and needs no GPU. Word timings come from the model's own duration head, so there is no separate forced-alignment pass.
 
-The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the 640 MB model from the sherpa-onnx GitHub release into `~/.cache/interactive-media-reader/models/`. Set `INTERACTIVE_MEDIA_READER_PARAKEET_DIR` to point at an existing copy instead.
+The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the 640 MB model from the sherpa-onnx GitHub release into `~/.cache/interactive-media-reader/models/`.
+
+| Variable | Effect |
+| --- | --- |
+| `INTERACTIVE_MEDIA_READER_PARAKEET_DIR` | Use an existing model directory instead of downloading one |
+| `INTERACTIVE_MEDIA_READER_CACHE` | Move the model cache off `~/.cache/interactive-media-reader` |
+| `INTERACTIVE_MEDIA_READER_THREADS` | Decode threads, default 4 |
+| `MEDIA_READER_PYTHON` | Use an existing Python instead of the managed environment |
+
+The thread default is deliberately below the core count. Measured end to end on an 86-minute file on a 10-core Apple Silicon machine, same code both times, 4 threads ran 4:10 using 882s of CPU where 6 ran 4:46 using 1377s — slower and 56% hungrier, even though an isolated single-window benchmark ranks 6 ahead. Re-measure before raising it.
 
 The model covers Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Anything else — Chinese, Japanese, Korean, Arabic — is out of scope.
 
