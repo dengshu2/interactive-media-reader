@@ -12,8 +12,31 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
+# Python's mimetypes reads the system table, which maps .m4a to
+# audio/mp4a-latm (raw LATM-framed AAC). No browser decodes that, so an m4a
+# reader loads its page and then silently fails to load its audio. Pin the
+# container types the pipeline accepts instead of trusting the host.
+MEDIA_TYPES = {
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".m4v": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".mp4": "video/mp4",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".webm": "video/webm",
+}
+
+
 class RangeRequestHandler(SimpleHTTPRequestHandler):
     byte_range: tuple[int, int] | None = None
+
+    def guess_type(self, path):
+        suffix = Path(path).suffix.lower()
+        return MEDIA_TYPES.get(suffix) or super().guess_type(path)
 
     def send_head(self):
         path = self.translate_path(self.path)

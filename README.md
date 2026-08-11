@@ -2,12 +2,13 @@
 
 Turn one local audio or video file into a same-language, clickable transcript reader. Click any sentence to seek and play; the current sentence follows playback automatically.
 
-把一个本地音频或视频文件转换成同语言的交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。
+把一个本地音频或视频文件转换成同语言的交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。**仅支持英语及其他欧洲语言，不支持中文。**
 
 ## Scope
 
 The required input is exactly one local media path.
 
+- English and 24 other European languages; **no Chinese or other non-European support**
 - No transcript manuscript required
 - No translation requested or generated
 - No cloud transcription API
@@ -25,7 +26,13 @@ brew install ffmpeg uv        # macOS
 sudo apt install ffmpeg       # Debian/Ubuntu
 ```
 
-The ASR engine is selected per platform: Apple Silicon uses MLX Whisper (`mlx-community/whisper-large-v3-turbo`); every other platform uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`large-v3-turbo`, CUDA is used automatically when available). The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the model from Hugging Face. Expect several gigabytes of local cache in total.
+### ASR engine
+
+Transcription runs NVIDIA [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) on every platform — the int8 build is CPU-only and needs no GPU. Word timings come from the model's own duration head, so there is no separate forced-alignment pass.
+
+The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the 640 MB model from the sherpa-onnx GitHub release into `~/.cache/interactive-media-reader/models/`. Set `INTERACTIVE_MEDIA_READER_PARAKEET_DIR` to point at an existing copy instead.
+
+The model covers Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Anything else — Chinese, Japanese, Korean, Arabic — is out of scope.
 
 ## Install as an Agent Skill
 
@@ -89,16 +96,18 @@ ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4
 │   ├── data/subtitles.vtt
 │   └── media/source.* -> original media
 └── work/
-    ├── asr.json
-    ├── asr-repaired.json
-    └── gap-repair-report.json
+    └── asr.json
 ```
 
 A marker file prevents accidental writes into unrelated non-empty directories. ASR caches are reused only when the source SHA-256, model, decoding options, and pipeline version all match.
 
 ## Quality safeguards
 
-Long-form Whisper can skip speech after an incorrect timestamp jump. The pipeline audits gaps longer than 1.5 seconds, re-transcribes candidates in short overlapping windows, and only repairs gaps where confident speech is recovered. Remaining pauses are left untouched, and the frontend clears highlighting when no sentence covers the current time.
+Roughly one Parakeet decode window in ten collapses, losing punctuation, capitalization and content at once. Because sentence splitting depends on punctuation, a collapsed window would otherwise produce minute-long "sentences". Windows that come back with no sentence-ending punctuation at all are detected and re-decoded in halves, which recovers them.
+
+Earlier versions ran a second pass that hunted for speech-bearing holes in the transcript. That existed because long-form Whisper can seek past audio after predicting an early end timestamp — on an 86-minute audiobook it swallowed 98.7 seconds across five places. Parakeet decodes frame-synchronously and cannot skip ahead: the same file yielded one candidate gap and zero repairs, so the pass was removed rather than kept as decoration.
+
+Pauses are left untouched, and the frontend clears highlighting when no sentence covers the current time.
 
 ## Keyboard controls
 
@@ -114,17 +123,19 @@ Long-form Whisper can skip speech after an incorrect timestamp jump. The pipelin
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v
+uv sync --locked --no-dev
+uv run python -m unittest discover -s tests -v
 node --check assets/app.js
 python3 -m py_compile scripts/*.py
 ```
 
-The repository contains no copyrighted media, generated transcript, model, virtual environment, or local output. Tests use synthetic metadata and small text fixtures; full Whisper inference is an optional local smoke test.
+The repository contains no copyrighted media, generated transcript, model, virtual environment, or local output. Tests use synthetic metadata and small text fixtures; full Parakeet inference is an optional local smoke test.
 
 ## Current limitations
 
-- Spoken chapter heading detection covers English ("Chapter 3", "Part two") and Chinese ("第三章", "第二十五章"); other languages get one transcript chapter
-- The faster-whisper backend is adapter-smoke-tested; the reference pipeline runs on Apple Silicon MLX
+- Chinese and every other non-European language is out of scope; the model cannot transcribe them
+- Spoken chapter heading detection covers English only ("Chapter 3", "Part two"); other languages get one transcript chapter
+- Sentence splitting depends on the model's punctuation, so a decode window that loses it is re-decoded rather than salvaged
 - Very long readers render all sentence nodes at once
 - Arbitrary manuscripts and translations are deliberate non-goals
 

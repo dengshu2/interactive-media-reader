@@ -115,40 +115,19 @@ class MediaReaderTests(unittest.TestCase):
         chapters = media_reader.detect_chapters([{"text": "Hello world.", "start": 0.2, "end": 1.0}])
         self.assertEqual([(item["start"], item["title"]) for item in chapters], [(0.0, "Transcript")])
 
-    def test_parse_cjk_number(self):
-        for text, expected in (("3", 3), ("１２", 12), ("一", 1), ("两", 2), ("十", 10), ("十一", 11), ("二十", 20), ("二十五", 25), ("九十九", 99)):
-            self.assertEqual(media_reader.parse_cjk_number(text), expected, text)
-        self.assertIsNone(media_reader.parse_cjk_number("abc"))
-
-    def test_chinese_heading_with_inline_subtitle(self):
-        sentences = [{"text": "第九章 剪除消耗你能量的东西。", "start": 100.0, "end": 104.0}]
-        self.assertEqual(media_reader.heading_title(sentences, 0), "第九章: 剪除消耗你能量的东西")
-
-    def test_chinese_heading_long_narration_kept_bare(self):
-        sentences = [{"text": "第十章我们要讨论的内容涉及很多方面而且没有空格分隔的副标题。", "start": 100.0, "end": 104.0}]
-        self.assertEqual(media_reader.heading_title(sentences, 0), "第十章")
-
-    def test_chinese_chapters_detected_with_localized_labels(self):
+    def test_chapters_detected_from_spoken_headings(self):
         sentences = [
-            {"text": "欢迎收听。", "start": 0.2, "end": 1.0},
-            {"text": "第一章 早晨的力量。", "start": 30.0, "end": 33.0},
-            {"text": "正文内容。", "start": 34.0, "end": 36.0},
-            {"text": "第二十五章 坚持的意义。", "start": 90.0, "end": 93.0},
-            {"text": "结语。", "start": 150.0, "end": 151.0},
+            {"text": "Welcome in.", "start": 0.2, "end": 1.0},
+            {"text": "Chapter one. The power of mornings.", "start": 30.0, "end": 33.0},
+            {"text": "Body copy.", "start": 34.0, "end": 36.0},
+            {"text": "Chapter 12. Why persistence matters.", "start": 90.0, "end": 93.0},
+            {"text": "Conclusion.", "start": 150.0, "end": 151.0},
         ]
-        chapters = media_reader.detect_chapters(sentences, "zh")
+        chapters = media_reader.detect_chapters(sentences)
         self.assertEqual(
             [item["title"] for item in chapters],
-            ["引言", "第一章: 早晨的力量", "第二十五章: 坚持的意义", "结语"],
+            ["Introduction", "Chapter 1: The power of mornings", "Chapter 12: Why persistence matters", "Conclusion"],
         )
-
-    def test_cache_key_includes_non_default_backend(self):
-        fingerprint = {"sha256": "abc"}
-        mlx_key = media_reader.asr_cache_key(fingerprint, "model-a")
-        faster_key = media_reader.asr_cache_key(fingerprint, "model-a", "faster-whisper")
-        self.assertNotIn("backend", mlx_key)
-        self.assertEqual(faster_key["backend"], "faster-whisper")
-        self.assertNotEqual(mlx_key, faster_key)
 
     def test_non_reader_directory_is_protected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -167,7 +146,6 @@ class MediaReaderTests(unittest.TestCase):
         asr = {
             "language": "en",
             "model": "test-model",
-            "gapRepair": {"repairedGaps": 1},
             "segments": [
                 {
                     "words": [
@@ -190,7 +168,7 @@ class MediaReaderTests(unittest.TestCase):
             )
             self.assertEqual(len(reader["sentences"]), 2)
             self.assertEqual(reader["generator"]["version"], media_reader.GENERATOR_VERSION)
-            self.assertEqual(reader["alignment"]["repairedGaps"], 1)
+            self.assertEqual(reader["alignment"]["averageWordConfidence"], 0.975)
             self.assertTrue((public / "data" / "subtitles.vtt").read_text().startswith("WEBVTT"))
 
     def test_cache_key_changes_with_model(self):
@@ -198,6 +176,40 @@ class MediaReaderTests(unittest.TestCase):
         first = media_reader.asr_cache_key(fingerprint, "model-a")
         second = media_reader.asr_cache_key(fingerprint, "model-b")
         self.assertNotEqual(first, second)
+
+    def confidence_reader(self, probability):
+        asr = {
+            "language": "en",
+            "model": "test-model",
+            "segments": [
+                {
+                    "words": [
+                        {"word": " Hello", "start": 0.2, "end": 0.5, "probability": probability},
+                        {"word": " world.", "start": 0.5, "end": 1.0, "probability": probability},
+                    ]
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            return media_reader.build_reader(
+                asr,
+                {"mediaType": "audio", "duration": 1.5},
+                "Test Reader",
+                "media/source.mp3",
+                Path(directory),
+            )
+
+    def test_alignment_method_names_the_engine(self):
+        self.assertIn("Parakeet", self.confidence_reader(0.99)["alignment"]["method"])
+
+    def test_low_confidence_threshold_is_calibrated_for_parakeet(self):
+        # 0.90 would be a healthy Whisper word but is a weak Parakeet one, whose
+        # greedy transducer probabilities bunch near 1.0.
+        healthy = self.confidence_reader(0.99)["alignment"]
+        weak = self.confidence_reader(0.90)["alignment"]
+        self.assertEqual(healthy["lowConfidenceSentences"], 0)
+        self.assertEqual(weak["lowConfidenceSentences"], 1)
+        self.assertEqual(weak["lowConfidenceThreshold"], 0.95)
 
 
 if __name__ == "__main__":

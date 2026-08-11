@@ -21,9 +21,8 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = SKILL_DIR / "assets"
-REPAIR_SCRIPT = SKILL_DIR / "scripts" / "repair_asr_gaps.py"
 SERVE_SCRIPT = SKILL_DIR / "scripts" / "serve.py"
-END_RE = re.compile(r"[.!?。！？](?:[\"'”’」』])?$")
+END_RE = re.compile(r"[.!?](?:[\"'”’])?$")
 HEADING_RE = re.compile(
     r"^(?P<kind>chapter|part|lesson|section)\s+(?P<number>\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b",
@@ -34,23 +33,19 @@ NUMBER_WORDS = {
         "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty".split()
     )
 }
-CJK_HEADING_RE = re.compile(
-    r"^第\s*(?P<number>[0-9０-９]{1,4}|[零一二两三四五六七八九十]{1,4})\s*(?P<kind>章|部分|回|节|節|课|課|讲|講|篇)"
-)
-CJK_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
-FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
-CJK_RE = re.compile(r"[一-鿿]")
-OUTRO_RE = re.compile(r"^(?:outro|conclusion)\b|(?:you(?:'ve| have)? reached the end)|^(?:结语|結語|尾声|尾聲|结论|結論|总结|總結)", re.I)
-CHAPTER_LABELS_ZH = {"Introduction": "引言", "Conclusion": "结语", "Transcript": "全文"}
-GENERATOR_VERSION = "0.3.2"
-ASR_PIPELINE_VERSION = 1
-REPAIR_PIPELINE_VERSION = 1
+OUTRO_RE = re.compile(r"^(?:outro|conclusion)\b|(?:you(?:'ve| have)? reached the end)", re.I)
+ALIGNMENT_METHOD = "Parakeet TDT duration-head word timestamps with degenerate-window re-decoding"
+# Parakeet's greedy transducer probabilities bunch near 1.0, so this sits much
+# higher than a Whisper-calibrated threshold would; it marks roughly the weakest
+# 4% of sentences on real material.
+LOW_CONFIDENCE_THRESHOLD = 0.95
+GENERATOR_VERSION = "0.4.0"
+ASR_PIPELINE_VERSION = 2
 PROJECT_MARKER = ".interactive-media-reader.json"
 TRANSCRIBE_OPTIONS = {
     "task": "transcribe",
-    "word_timestamps": True,
-    "condition_on_previous_text": True,
-    "hallucination_silence_threshold": 2.0,
+    "window": "quiet-boundary",
+    "windowSeconds": 60.0,
 }
 BROWSER_AUDIO_CODECS = {"aac", "alac", "flac", "mp3", "opus", "pcm_s16le", "pcm_s24le", "vorbis"}
 BROWSER_VIDEO_CODECS = {"av1", "h264", "hevc", "vp8", "vp9"}
@@ -158,31 +153,17 @@ def resolve_title(media: Path, override: str | None = None) -> str:
     return metadata_title(media) or clean_title(media)
 
 
-def asr_cache_key(fingerprint: dict, model: str, backend: str = "mlx") -> dict:
-    key = {
+def asr_cache_key(fingerprint: dict, model: str) -> dict:
+    return {
         "pipelineVersion": ASR_PIPELINE_VERSION,
         "model": model,
         "options": TRANSCRIBE_OPTIONS,
         "source": fingerprint,
     }
-    # The mlx key shape predates multi-backend support; keep it unchanged so
-    # existing caches stay valid.
-    if backend != "mlx":
-        key["backend"] = backend
-    return key
 
 
-def repair_cache_key(asr: dict, model: str) -> dict:
-    return {
-        "pipelineVersion": REPAIR_PIPELINE_VERSION,
-        "model": model,
-        "minimumGap": 1.5,
-        "asr": asr.get("cacheKey"),
-    }
-
-
-def transcribe(media: Path, output: Path, fingerprint: dict, model: str, backend: str) -> dict:
-    expected_cache_key = asr_cache_key(fingerprint, model, backend)
+def transcribe(media: Path, output: Path, fingerprint: dict, model: str) -> dict:
+    expected_cache_key = asr_cache_key(fingerprint, model)
     if output.exists():
         cached = json.loads(output.read_text(encoding="utf-8"))
         if cached.get("cacheKey") == expected_cache_key:
@@ -194,16 +175,10 @@ def transcribe(media: Path, output: Path, fingerprint: dict, model: str, backend
     try:
         from asr_backends import transcribe_file
     except ImportError as error:
-        raise RuntimeError("ASR backend is unavailable; rerun through scripts/build.sh") from error
+        raise RuntimeError("ASR engine is unavailable; rerun through scripts/build.sh") from error
 
-    print(f"Transcribing {media.name} with {model} ({backend})", flush=True)
-    result = transcribe_file(
-        media,
-        model,
-        condition_on_previous_text=TRANSCRIBE_OPTIONS["condition_on_previous_text"],
-        hallucination_silence_threshold=TRANSCRIBE_OPTIONS["hallucination_silence_threshold"],
-        backend=backend,
-    )
+    print(f"Transcribing {media.name} with {model}", flush=True)
+    result = transcribe_file(media, model)
     result["model"] = model
     result["cacheKey"] = expected_cache_key
     result["sourceFingerprint"] = fingerprint
@@ -243,48 +218,23 @@ def make_sentence(words: list[dict], index: int) -> dict:
     }
 
 
-def parse_cjk_number(text: str) -> int | None:
-    normalized = text.translate(FULLWIDTH_DIGITS)
-    if normalized.isdigit():
-        return int(normalized)
-    if "十" in text:
-        tens, _, units = text.partition("十")
-        if (tens and tens not in CJK_DIGITS) or (units and units not in CJK_DIGITS):
-            return None
-        return (CJK_DIGITS[tens] if tens else 1) * 10 + (CJK_DIGITS[units] if units else 0)
-    if len(text) == 1 and text in CJK_DIGITS:
-        return CJK_DIGITS[text]
-    return None
-
-
 def parse_heading(text: str) -> dict | None:
-    """Match a spoken chapter heading in English or Chinese.
+    """Match a spoken chapter heading.
 
     Returns the dedup key parts (kind, number), a display label preserving the
     spoken number form, and the match end for subtitle extraction.
     """
     match = HEADING_RE.search(text)
-    if match:
-        raw_number = match.group("number").lower()
-        number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
-        return {
-            "kind": match.group("kind").lower(),
-            "number": number,
-            "label": f"{match.group('kind').capitalize()} {number}",
-            "end": match.end(),
-        }
-    match = CJK_HEADING_RE.search(text)
-    if match:
-        number = parse_cjk_number(match.group("number"))
-        if number is None:
-            return None
-        return {
-            "kind": match.group("kind"),
-            "number": number,
-            "label": f"第{match.group('number')}{match.group('kind')}",
-            "end": match.end(),
-        }
-    return None
+    if not match:
+        return None
+    raw_number = match.group("number").lower()
+    number = int(raw_number) if raw_number.isdigit() else NUMBER_WORDS[raw_number]
+    return {
+        "kind": match.group("kind").lower(),
+        "number": number,
+        "label": f"{match.group('kind').capitalize()} {number}",
+        "end": match.end(),
+    }
 
 
 def collapse_adjacent_duplicates(words: list[str]) -> list[str]:
@@ -303,12 +253,6 @@ def inline_subtitle(remainder: str) -> str | None:
     drains your energy."). A longer remainder usually runs into narration, so
     only its leading title-cased words are trusted.
     """
-    if CJK_RE.search(remainder):
-        # No capitalization signal in CJK: a short remainder (or short leading
-        # space-separated token) is the subtitle; anything longer is narration.
-        token = remainder.split()[0] if remainder.split() else ""
-        token = token.rstrip("。！？.!?，,;：:、")
-        return token if 0 < len(token) <= 12 else None
     words = remainder.split()
     if not words:
         return None
@@ -316,7 +260,7 @@ def inline_subtitle(remainder: str) -> str | None:
     if not first_alpha.isupper():
         return None
     if len(words) <= 6:
-        return " ".join(collapse_adjacent_duplicates(words)).rstrip(".!?。！？,;:")
+        return " ".join(collapse_adjacent_duplicates(words)).rstrip(".!?,;:")
     run = []
     for word in words:
         alpha = next((char for char in word if char.isalpha()), "")
@@ -325,7 +269,7 @@ def inline_subtitle(remainder: str) -> str | None:
         run.append(word)
     run = collapse_adjacent_duplicates(run)
     if 2 <= len(run) <= 8:
-        return " ".join(run).rstrip(".!?。！？,;:")
+        return " ".join(run).rstrip(".!?,;:")
     return None
 
 
@@ -333,9 +277,9 @@ def heading_title(sentences: list[dict], index: int) -> str:
     text = sentences[index]["text"].strip()
     parsed = parse_heading(text)
     if not parsed:
-        return text.rstrip(".!?。！？")
+        return text.rstrip(".!?")
     heading = parsed["label"]
-    remainder = text[parsed["end"]:].strip(" .:：，、—–-。！？　")
+    remainder = text[parsed["end"]:].strip(" .:—–-")
     if remainder:
         subtitle = inline_subtitle(remainder)
         return f"{heading}: {subtitle}" if subtitle else heading
@@ -345,7 +289,7 @@ def heading_title(sentences: list[dict], index: int) -> str:
         words = following["text"].split()
         if len(words) > 6 or following["start"] - previous_end > 2.0 or parse_heading(following["text"].strip()):
             break
-        addition = following["text"].strip().rstrip(".!?。！？，,")
+        addition = following["text"].strip().rstrip(".!?,")
         previous_end = following["end"]
         # Narrators often speak the subtitle twice; keep one copy.
         if any(existing.lower() == addition.lower() for existing in additions):
@@ -365,8 +309,7 @@ def heading_title(sentences: list[dict], index: int) -> str:
     return f"{heading}: {subtitle}"
 
 
-def detect_chapters(sentences: list[dict], language: str = "") -> list[dict]:
-    labels = CHAPTER_LABELS_ZH if str(language).startswith("zh") else {}
+def detect_chapters(sentences: list[dict]) -> list[dict]:
     boundaries: list[tuple[float, str]] = []
     # Long-form narration may preview a chapter before speaking its real heading.
     # Keep the final occurrence of each explicit chapter/part number.
@@ -380,15 +323,15 @@ def detect_chapters(sentences: list[dict], language: str = "") -> list[dict]:
     if headings:
         first_start = headings[0][1]["start"]
         if first_start > 8:
-            boundaries.append((0.0, labels.get("Introduction", "Introduction")))
+            boundaries.append((0.0, "Introduction"))
         for index, item in headings:
             boundaries.append((item["start"], heading_title(sentences, index)))
         for item in sentences:
             if OUTRO_RE.search(item["text"].strip()) and item["start"] > boundaries[-1][0] + 30:
-                boundaries.append((item["start"], labels.get("Conclusion", "Conclusion")))
+                boundaries.append((item["start"], "Conclusion"))
                 break
     else:
-        boundaries.append((0.0, labels.get("Transcript", "Transcript")))
+        boundaries.append((0.0, "Transcript"))
 
     deduplicated = []
     for start, title in sorted(boundaries):
@@ -414,7 +357,7 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     if not sentences:
         raise RuntimeError("Transcription produced no timed sentences")
     language = asr.get("language", "unknown")
-    chapters = detect_chapters(sentences, str(language or ""))
+    chapters = detect_chapters(sentences)
     starts = [chapter["start"] for chapter in chapters]
     counts = [0] * len(chapters)
     for sentence in sentences:
@@ -426,11 +369,8 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
 
     word_count = sum(item["wordCount"] for item in sentences)
     confidence = sum(item["confidence"] * item["wordCount"] for item in sentences) / word_count
-    gap_quality = asr.get("gapRepair", {})
-    repairs = int(gap_quality.get("repairedGaps", 0))
+    low_confidence = LOW_CONFIDENCE_THRESHOLD
     quality = f"{str(language).upper()} 转写 · 置信度 {confidence:.0%}"
-    if repairs:
-        quality += f" · 修复断档 {repairs} 处"
     reader = {
         "version": 1,
         "generator": {
@@ -438,7 +378,6 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
             "version": GENERATOR_VERSION,
             "model": asr.get("model"),
             "asrPipelineVersion": ASR_PIPELINE_VERSION,
-            "repairPipelineVersion": REPAIR_PIPELINE_VERSION,
         },
         "title": title,
         "mediaUrl": media_url,
@@ -449,14 +388,11 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
         "chapters": chapters,
         "sentences": sentences,
         "alignment": {
-            "method": "MLX Whisper word timestamps with short-window gap repair",
+            "method": ALIGNMENT_METHOD,
             "mode": "source-language-asr",
             "averageWordConfidence": round(confidence, 4),
-            "lowConfidenceSentences": sum(item["confidence"] < 0.75 for item in sentences),
-            "candidateGaps": int(gap_quality.get("candidateGaps", 0)),
-            "repairedGaps": repairs,
-            "remainingGaps": int(gap_quality.get("remainingGaps", 0)),
-            "maximumRemainingGap": float(gap_quality.get("maximumRemainingGap", 0.0)),
+            "lowConfidenceSentences": sum(item["confidence"] < low_confidence for item in sentences),
+            "lowConfidenceThreshold": low_confidence,
             "display": quality,
         },
     }
@@ -584,7 +520,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("media", type=Path)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--model", help="Whisper model; defaults per backend (MLX turbo on Apple Silicon, large-v3-turbo elsewhere)")
+    parser.add_argument("--model", help="Parakeet model directory; defaults to the cached release build")
     parser.add_argument("--title", help="display title; defaults to a yt-dlp sidecar title, then the cleaned filename")
     parser.add_argument("--open", action="store_true", dest="open_preview")
     parser.add_argument("--validate-only", action="store_true")
@@ -601,9 +537,8 @@ def main() -> None:
 
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         raise RuntimeError("ffmpeg and ffprobe are required")
-    from asr_backends import backend_name, default_model
-    backend = backend_name()
-    model = args.model or default_model(backend)
+    from asr_backends import default_model
+    model = args.model or default_model()
     info = probe_media(media)
     if media.suffix.lower() not in BROWSER_CONTAINERS or not info["codecCompatible"]:
         codecs = "/".join(filter(None, [info.get("videoCodec"), info.get("audioCodec")]))
@@ -616,38 +551,8 @@ def main() -> None:
     prepare_output(output, media, fingerprint)
     public, media_url = prepare_public(media, output)
     asr_path = output / "work" / "asr.json"
-    repaired_path = output / "work" / "asr-repaired.json"
-    report_path = output / "work" / "gap-repair-report.json"
-    asr = transcribe(media, asr_path, fingerprint, model, backend)
-
-    expected_repair_key = repair_cache_key(asr, model)
-    repaired = None
-    if repaired_path.exists():
-        candidate = json.loads(repaired_path.read_text(encoding="utf-8"))
-        if candidate.get("repairCacheKey") == expected_repair_key:
-            repaired = candidate
-        else:
-            print("Gap-repair cache is stale; rebuilding.", flush=True)
-            repaired_path.unlink()
-            report_path.unlink(missing_ok=True)
-    if repaired is None:
-        subprocess.run(
-            [
-                sys.executable,
-                str(REPAIR_SCRIPT),
-                str(media),
-                str(asr_path),
-                str(repaired_path),
-                str(report_path),
-                "--model",
-                model,
-            ],
-            check=True,
-        )
-        repaired = json.loads(repaired_path.read_text(encoding="utf-8"))
-        repaired["repairCacheKey"] = expected_repair_key
-        atomic_json(repaired_path, repaired)
-    reader = build_reader(repaired, info, resolve_title(media, args.title), media_url, public)
+    asr = transcribe(media, asr_path, fingerprint, model)
+    reader = build_reader(asr, info, resolve_title(media, args.title), media_url, public)
     validate_output(output)
 
     url = None
@@ -659,15 +564,12 @@ def main() -> None:
         "input": str(media),
         "output": str(output),
         "title": reader["title"],
-        "backend": backend,
         "model": model,
         "mediaType": info["mediaType"],
         "language": reader["sourceLanguage"],
         "sentences": len(reader["sentences"]),
         "chapters": len(reader["chapters"]),
-        "repairedGaps": reader["alignment"]["repairedGaps"],
-        "remainingGaps": reader["alignment"]["remainingGaps"],
-        "maximumRemainingGap": reader["alignment"]["maximumRemainingGap"],
+        "lowConfidenceSentences": reader["alignment"]["lowConfidenceSentences"],
         "url": url,
     }
     print(json.dumps(summary, ensure_ascii=False))

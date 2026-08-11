@@ -1,17 +1,18 @@
 [project]
 name = "interactive-media-reader"
-version = "0.3.2"
-description = "Build a same-language interactive transcript reader from one local media file."
+version = "0.4.0"
+description = "Build a same-language interactive transcript reader from one local English or European-language media file."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
 authors = [{ name = "dengshu2" }]
 dependencies = [
-  "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
-  "faster-whisper==1.2.0; sys_platform != 'darwin' or platform_machine != 'arm64'",
-  # faster-whisper 1.2.0 imports requests but stopped receiving it transitively
-  # once huggingface-hub 1.x dropped the dependency.
-  "requests==2.32.5; sys_platform != 'darwin' or platform_machine != 'arm64'",
+  "sherpa-onnx==1.13.5",
+  # sherpa-onnx ships its native libraries (libonnxruntime, libsherpa-onnx-*)
+  # in this companion package. The wheel declares the dependency but the sdist
+  # does not, and uv resolves from the sdist metadata, so without this line the
+  # lock omits it and `import sherpa_onnx` dies on a missing @rpath/libonnxruntime.
+  "sherpa-onnx-core==1.13.5",
   "numpy==2.4.6",
 ]
 
