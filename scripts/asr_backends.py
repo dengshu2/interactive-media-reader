@@ -2,8 +2,8 @@
 """Transcribe media with NVIDIA Parakeet TDT through sherpa-onnx.
 
 Parakeet's duration head reports word timings directly, so the pipeline needs
-no separate forced-alignment pass. It covers English and 24 other European
-languages; there is no Chinese or other non-European support.
+no separate forced-alignment pass. This project intentionally supports English
+input only, even though the upstream model itself is multilingual.
 
 sherpa_onnx is imported inside functions so this module (and its callers) can
 be imported without the engine installed.
@@ -11,6 +11,7 @@ be imported without the engine installed.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -26,6 +27,7 @@ PARAKEET_RELEASE_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
     f"{PARAKEET_MODEL}.tar.bz2"
 )
+PARAKEET_RELEASE_SHA256 = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
 # Parakeet decodes a whole window at once and its encoder memory grows with the
 # window, so long media is cut into windows instead of streamed. Boundaries are
 # nudged onto the quietest nearby frame so a cut never lands mid-word and no
@@ -58,6 +60,31 @@ def default_model() -> str:
     return PARAKEET_MODEL
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def safe_extract(bundle: tarfile.TarFile, directory: Path) -> None:
+    """Extract an upstream model archive without allowing path traversal."""
+    try:
+        bundle.extractall(directory, filter="data")
+        return
+    except TypeError:  # Early Python 3.11 builds lack extraction filters.
+        pass
+
+    root = directory.resolve()
+    members = bundle.getmembers()
+    for member in members:
+        target = (directory / member.name).resolve()
+        if not target.is_relative_to(root) or member.issym() or member.islnk() or member.isdev():
+            raise RuntimeError(f"Unsafe path in model archive: {member.name}")
+    bundle.extractall(directory, members=members)
+
+
 def thread_count() -> int:
     # Measured end-to-end on an 86-minute file (10-core Apple Silicon): 4
     # threads ran 4:10 using 882s of CPU, 6 threads ran 4:46 using 1377s —
@@ -82,11 +109,13 @@ def model_directory(model: str) -> Path:
     with tempfile.TemporaryDirectory(prefix="parakeet-") as directory:
         archive = Path(directory) / "model.tar.bz2"
         urllib.request.urlretrieve(PARAKEET_RELEASE_URL, archive)
+        actual_digest = file_sha256(archive)
+        if actual_digest != PARAKEET_RELEASE_SHA256:
+            raise RuntimeError(
+                f"Model archive checksum mismatch: expected {PARAKEET_RELEASE_SHA256}, got {actual_digest}"
+            )
         with tarfile.open(archive, "r:bz2") as bundle:
-            try:
-                bundle.extractall(directory, filter="data")
-            except TypeError:  # Python without the extraction filter
-                bundle.extractall(directory)
+            safe_extract(bundle, Path(directory))
         extracted = Path(directory) / PARAKEET_MODEL
         if not (extracted / "encoder.int8.onnx").exists():
             raise RuntimeError(f"{PARAKEET_RELEASE_URL} did not contain {PARAKEET_MODEL}/encoder.int8.onnx")
@@ -185,7 +214,7 @@ def tokens_to_words(tokens, timestamps, durations, log_probabilities, offset: fl
     return words
 
 
-def words_to_segments(words: list[dict], language: str | None) -> dict:
+def words_to_segments(words: list[dict]) -> dict:
     """Group words into segments on sentence ends and pauses.
 
     Segments are what the reader turns into clickable sentences, so a segment
@@ -222,7 +251,7 @@ def words_to_segments(words: list[dict], language: str | None) -> dict:
     return {
         "text": "".join(segment["text"] for segment in segments),
         "segments": segments,
-        "language": language,
+        "language": "en",
     }
 
 
@@ -265,7 +294,7 @@ def decode_window(engine, audio, start: float, end: float, depth: int = 0) -> li
     return tokens_to_words(result.tokens, result.timestamps, result.durations, result.ys_log_probs, start)
 
 
-def transcribe_file(path: Path | str, model: str, *, language: str | None = None) -> dict:
+def transcribe_file(path: Path | str, model: str) -> dict:
     audio = load_audio(path)
     engine = recognizer(model)
     windows = quiet_windows(audio, SAMPLE_RATE, PARAKEET_WINDOW_SECONDS, PARAKEET_BOUNDARY_SEARCH_SECONDS)
@@ -276,4 +305,4 @@ def transcribe_file(path: Path | str, model: str, *, language: str | None = None
         if len(windows) > 1 and (index + 1) % 10 == 0:
             print(f"  window {index + 1}/{len(windows)} ({end:.0f}s)", flush=True)
 
-    return words_to_segments(words, language or "en")
+    return words_to_segments(words)

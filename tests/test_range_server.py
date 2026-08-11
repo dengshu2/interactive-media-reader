@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import http.client
 import importlib.util
+import json
+import socket
 import subprocess
 import sys
 import tempfile
@@ -41,18 +43,19 @@ class RangeServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source.m4a").write_bytes(b"\0" * 64)
-            status, headers = self.request(root, "/source.m4a")
+            status, headers, _ = self.request(root, "/source.m4a")
             self.assertEqual(status, 200)
             self.assertEqual(headers["Content-Type"], "audio/mp4")
 
-    def request(self, root: Path, path: str, headers: dict | None = None):
-        import socket
-
+    def request(self, root: Path, path: str, headers: dict | None = None, token: str = ""):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
+        command = [sys.executable, str(ROOT / "scripts" / "serve.py"), "--port", str(port), "--directory", str(root)]
+        if token:
+            command.extend(["--token", token])
         process = subprocess.Popen(
-            [sys.executable, str(ROOT / "scripts" / "serve.py"), "--port", str(port), "--directory", str(root)],
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -63,8 +66,8 @@ class RangeServerTests(unittest.TestCase):
                     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
                     connection.request("GET", path, headers=headers or {})
                     response = connection.getresponse()
-                    response.read()
-                    return response.status, {key: value for key, value in response.getheaders()}
+                    body = response.read()
+                    return response.status, {key: value for key, value in response.getheaders()}, body
                 except OSError:
                     if time.time() >= deadline:
                         raise
@@ -76,12 +79,111 @@ class RangeServerTests(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
 
+    def test_health_endpoint_requires_the_server_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status, _, body = self.request(
+                root,
+                "/.interactive-media-reader-health",
+                headers={"X-Interactive-Media-Reader-Token": "secret"},
+                token="secret",
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["ok"])
+
+            status, _, _ = self.request(
+                root,
+                "/.interactive-media-reader-health",
+                headers={"X-Interactive-Media-Reader-Token": "wrong"},
+                token="secret",
+            )
+            self.assertEqual(status, 403)
+
+    def test_stop_script_stops_only_a_verified_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            token = "stop-test-token"
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "serve.py"),
+                    "--port",
+                    str(port),
+                    "--directory",
+                    str(root),
+                    "--token",
+                    token,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                deadline = time.time() + 5
+                while True:
+                    try:
+                        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                        connection.request(
+                            "GET",
+                            "/.interactive-media-reader-health",
+                            headers={"X-Interactive-Media-Reader-Token": token},
+                        )
+                        response = connection.getresponse()
+                        response.read()
+                        if response.status == 200:
+                            break
+                    except OSError:
+                        if time.time() >= deadline:
+                            raise
+                        time.sleep(0.05)
+                metadata_path = root / ".server.json"
+                metadata = {
+                    "pid": process.pid,
+                    "port": port,
+                    "url": f"http://localhost:{port}",
+                    "token": "wrong-token",
+                }
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                refused = subprocess.run(
+                    [str(ROOT / "scripts" / "stop.sh"), str(root)],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("Refusing to stop PID", refused.stderr)
+                self.assertIsNone(process.poll())
+
+                metadata["token"] = token
+                metadata_path.write_text(
+                    json.dumps(
+                        metadata
+                    ),
+                    encoding="utf-8",
+                )
+                completed = subprocess.run(
+                    [str(ROOT / "scripts" / "stop.sh"), str(root)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertIn("Stopped verified preview server", completed.stdout)
+                self.assertFalse(metadata_path.exists())
+                process.wait(timeout=3)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        process.wait(timeout=3)
+                    if process.poll() is None:
+                        process.kill()
+
     def test_byte_range_response(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "sample.bin").write_bytes(bytes(range(256)) * 8)
             # Reserve a port by asking the OS, then release it immediately for the subprocess.
-            import socket
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]

@@ -364,7 +364,8 @@ function render() {
         paragraphSize = 0;
       }
       const span = document.createElement('span');
-      span.className = `sentence${sentence.confidence < 0.65 ? ' low-confidence' : ''}`;
+      const lowConfidenceThreshold = data.alignment.lowConfidenceThreshold ?? 0.95;
+      span.className = `sentence${sentence.confidence < lowConfidenceThreshold ? ' low-confidence' : ''}`;
       span.dataset.index = index;
       span.textContent = sentence.text;
       span.tabIndex = index === 0 ? 0 : -1;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a same-language interactive reader from one local media file."""
+"""Build an English interactive reader from one local media file."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import statistics
@@ -15,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from bisect import bisect_right
 from pathlib import Path
@@ -39,9 +42,10 @@ ALIGNMENT_METHOD = "Parakeet TDT duration-head word timestamps with degenerate-w
 # higher than a Whisper-calibrated threshold would; it marks roughly the weakest
 # 4% of sentences on real material.
 LOW_CONFIDENCE_THRESHOLD = 0.95
-GENERATOR_VERSION = "0.4.0"
+GENERATOR_VERSION = "0.5.0"
 ASR_PIPELINE_VERSION = 2
 PROJECT_MARKER = ".interactive-media-reader.json"
+SERVER_HEALTH_PATH = "/.interactive-media-reader-health"
 TRANSCRIBE_OPTIONS = {
     "task": "transcribe",
     "window": "quiet-boundary",
@@ -163,6 +167,11 @@ def asr_cache_key(fingerprint: dict, model: str) -> dict:
 
 
 def transcribe(media: Path, output: Path, fingerprint: dict, model: str) -> dict:
+    try:
+        from asr_backends import transcribe_file
+    except ImportError as error:
+        raise RuntimeError("ASR engine is unavailable; rerun through scripts/build.sh") from error
+
     expected_cache_key = asr_cache_key(fingerprint, model)
     if output.exists():
         cached = json.loads(output.read_text(encoding="utf-8"))
@@ -171,11 +180,6 @@ def transcribe(media: Path, output: Path, fingerprint: dict, model: str) -> dict
             return cached
         print("Transcription cache is stale; rebuilding.", flush=True)
         output.unlink()
-
-    try:
-        from asr_backends import transcribe_file
-    except ImportError as error:
-        raise RuntimeError("ASR engine is unavailable; rerun through scripts/build.sh") from error
 
     print(f"Transcribing {media.name} with {model}", flush=True)
     result = transcribe_file(media, model)
@@ -356,7 +360,6 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     sentences = timed_sentences(asr)
     if not sentences:
         raise RuntimeError("Transcription produced no timed sentences")
-    language = asr.get("language", "unknown")
     chapters = detect_chapters(sentences)
     starts = [chapter["start"] for chapter in chapters]
     counts = [0] * len(chapters)
@@ -370,7 +373,7 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
     word_count = sum(item["wordCount"] for item in sentences)
     confidence = sum(item["confidence"] * item["wordCount"] for item in sentences) / word_count
     low_confidence = LOW_CONFIDENCE_THRESHOLD
-    quality = f"{str(language).upper()} 转写 · 置信度 {confidence:.0%}"
+    quality = f"EN 转写 · 置信度 {confidence:.0%}"
     reader = {
         "version": 1,
         "generator": {
@@ -383,13 +386,13 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
         "mediaUrl": media_url,
         "audioUrl": media_url,
         "mediaType": info["mediaType"],
-        "sourceLanguage": language,
+        "sourceLanguage": "en",
         "duration": info["duration"] or sentences[-1]["end"],
         "chapters": chapters,
         "sentences": sentences,
         "alignment": {
             "method": ALIGNMENT_METHOD,
-            "mode": "source-language-asr",
+            "mode": "english-asr",
             "averageWordConfidence": round(confidence, 4),
             "lowConfidenceSentences": sum(item["confidence"] < low_confidence for item in sentences),
             "lowConfidenceThreshold": low_confidence,
@@ -490,30 +493,65 @@ def process_alive(pid: int) -> bool:
         return False
 
 
+def server_health(url: str, token: str, pid: int, timeout: float = 0.5) -> bool:
+    if not url or not token:
+        return False
+    request = urllib.request.Request(
+        f"{url.rstrip('/')}{SERVER_HEALTH_PATH}",
+        headers={"X-Interactive-Media-Reader-Token": token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+        return response.status == 200 and payload == {"ok": True, "pid": pid}
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
 def launch_server(output: Path) -> str:
     metadata_path = output / ".server.json"
     if metadata_path.exists():
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if process_alive(int(metadata["pid"])):
+            pid = int(metadata["pid"])
+            if process_alive(pid) and server_health(
+                str(metadata["url"]), str(metadata.get("token", "")), pid
+            ):
                 return str(metadata["url"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             pass
 
     port = available_port()
+    token = secrets.token_urlsafe(32)
     with (output / "server.log").open("a", encoding="utf-8") as log:
         process = subprocess.Popen(
-            [sys.executable, str(SERVE_SCRIPT), "--directory", str(output / "public"), "--port", str(port)],
+            [
+                sys.executable,
+                str(SERVE_SCRIPT),
+                "--directory",
+                str(output / "public"),
+                "--port",
+                str(port),
+                "--token",
+                token,
+            ],
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     url = f"http://localhost:{port}"
-    time.sleep(0.35)
-    if process.poll() is not None:
-        raise RuntimeError(f"Preview server failed; see {output / 'server.log'}")
-    atomic_json(metadata_path, {"pid": process.pid, "port": port, "url": url})
-    return url
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if process.poll() is not None:
+            break
+        if server_health(url, token, process.pid):
+            atomic_json(metadata_path, {"pid": process.pid, "port": port, "url": url, "token": token})
+            return url
+        time.sleep(0.05)
+    if process.poll() is None:
+        process.terminate()
+        process.wait(timeout=3)
+    raise RuntimeError(f"Preview server failed health verification; see {output / 'server.log'}")
 
 
 def main() -> None:

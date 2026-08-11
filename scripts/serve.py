@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hmac
+import json
 import os
 import re
 from email.utils import formatdate
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+HEALTH_PATH = "/.interactive-media-reader-health"
 
 
 # Python's mimetypes reads the system table, which maps .m4a to
@@ -36,6 +40,23 @@ class RangeRequestHandler(SimpleHTTPRequestHandler):
     def guess_type(self, path):
         suffix = Path(path).suffix.lower()
         return MEDIA_TYPES.get(suffix) or super().guess_type(path)
+
+    def do_GET(self):
+        if self.path == HEALTH_PATH:
+            expected = str(getattr(self.server, "health_token", ""))
+            supplied = self.headers.get("X-Interactive-Media-Reader-Token", "")
+            if not expected or not hmac.compare_digest(expected, supplied):
+                self.send_error(403, "Invalid reader server token")
+                return
+            body = json.dumps({"ok": True, "pid": os.getpid()}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
     def send_head(self):
         path = self.translate_path(self.path)
@@ -104,9 +125,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--directory", type=Path, default=Path.cwd())
+    parser.add_argument("--token", default="")
     args = parser.parse_args()
     os.chdir(args.directory)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), RangeRequestHandler)
+    server.health_token = args.token
     print(f"Reader: http://localhost:{args.port}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     try:
