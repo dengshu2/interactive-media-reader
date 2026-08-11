@@ -40,6 +40,11 @@ class StaticAssetTests(unittest.TestCase):
         script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn("span.textContent = sentence.text", script)
 
+    def test_low_confidence_style_uses_the_backend_threshold(self):
+        script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("data.alignment.lowConfidenceThreshold", script)
+        self.assertNotIn("sentence.confidence < 0.65", script)
+
     def test_play_button_has_distinct_css_states(self):
         html = (ROOT / "assets" / "index.html").read_text(encoding="utf-8")
         styles = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import importlib.util
 import math
+import tarfile
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -33,6 +36,21 @@ class ModelSelectionTests(unittest.TestCase):
     def test_thread_count_stays_within_bounds(self):
         self.assertGreaterEqual(backends.thread_count(), 1)
         self.assertLessEqual(backends.thread_count(), 6)
+
+    def test_release_archive_has_a_pinned_sha256(self):
+        self.assertRegex(backends.PARAKEET_RELEASE_SHA256, r"^[0-9a-f]{64}$")
+
+    def test_safe_extract_rejects_path_traversal(self):
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as bundle:
+            member = tarfile.TarInfo("../escape.txt")
+            payload = b"escape"
+            member.size = len(payload)
+            bundle.addfile(member, io.BytesIO(payload))
+        archive.seek(0)
+        with tempfile.TemporaryDirectory() as directory, tarfile.open(fileobj=archive, mode="r") as bundle:
+            with self.assertRaises((tarfile.FilterError, RuntimeError)):
+                backends.safe_extract(bundle, Path(directory))
 
 
 class ParakeetTokenTests(unittest.TestCase):
@@ -76,18 +94,18 @@ class ParakeetSegmentTests(unittest.TestCase):
 
     def test_sentence_end_closes_a_segment(self):
         result = backends.words_to_segments(
-            [self.word(" Hello.", 0.0, 0.5), self.word(" Bye.", 0.6, 1.0)], "en"
+            [self.word(" Hello.", 0.0, 0.5), self.word(" Bye.", 0.6, 1.0)]
         )
         self.assertEqual([segment["text"] for segment in result["segments"]], [" Hello.", " Bye."])
         self.assertEqual(result["language"], "en")
 
     def test_long_pause_closes_a_segment_without_punctuation(self):
         words = [self.word(" one", 0.0, 0.5), self.word(" two", 9.0, 9.5)]
-        result = backends.words_to_segments(words, "en")
+        result = backends.words_to_segments(words)
         self.assertEqual(len(result["segments"]), 2)
 
     def test_segment_carries_its_words_and_bounds(self):
-        result = backends.words_to_segments([self.word(" Hi.", 2.0, 2.75)], "en")
+        result = backends.words_to_segments([self.word(" Hi.", 2.0, 2.75)])
         segment = result["segments"][0]
         self.assertEqual(segment["start"], 2.0)
         self.assertEqual(segment["end"], 2.75)
@@ -96,7 +114,7 @@ class ParakeetSegmentTests(unittest.TestCase):
 
     def test_runaway_segment_is_capped(self):
         words = [self.word(f" w{index}", index * 0.1, index * 0.1 + 0.05) for index in range(130)]
-        result = backends.words_to_segments(words, "en")
+        result = backends.words_to_segments(words)
         self.assertTrue(all(len(segment["words"]) <= 60 for segment in result["segments"]))
 
 

@@ -1,22 +1,26 @@
 # Interactive Media Reader
 
-Turn one local audio or video file into a same-language, clickable transcript reader. Click any sentence to seek and play; the current sentence follows playback automatically.
+Turn one local English-language audio or video file into a clickable transcript reader. Click any sentence to seek and play; the current sentence follows playback automatically.
 
-把一个本地音频或视频文件转换成同语言的交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。**仅支持英语及其他欧洲语言，不支持中文。**
+把一个本地英文音频或视频文件转换成交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。**仅支持英语，其他语言均不处理。**
+
+> **0.5.0 English-only release**
+>
+> The supported input is now deliberately limited to English. There is no multilingual detection, fallback, or translation path. Model downloads are checksum-verified, preview servers prove their identity before reuse or shutdown, and low-confidence highlighting uses the same threshold as the generated report.
 
 > **Upgrading from 0.3.x**
 >
-> 0.4.0 replaces Whisper with Parakeet TDT and **drops Chinese and every other non-European language**. If you use this on CJK media, stay on [v0.3.2](https://github.com/dengshu2/interactive-media-reader/releases/tag/v0.3.2).
+> 0.4.0 replaced Whisper with Parakeet TDT. Starting with 0.5.0, **English is the only supported input language**. Use an older release if you need a different language.
 >
 > Existing outputs keep working, but the next build re-transcribes from scratch: the ASR cache key changed, and `work/asr-repaired.json` and `work/gap-repair-report.json` are no longer produced.
 >
-> 0.4.0 起改用 Parakeet TDT，**移除中文及所有非欧洲语言支持**。需要处理中文素材请停留在 v0.3.2。
+> 0.4.0 起改用 Parakeet TDT；0.5.0 起只处理英语，其他语言均不再支持。
 
 ## Scope
 
 The required input is exactly one local media path.
 
-- English and 24 other European languages; **no Chinese or other non-European support**
+- English only; all other languages are out of scope
 - No transcript manuscript required
 - No translation requested or generated
 - No cloud transcription API
@@ -36,9 +40,9 @@ sudo apt install ffmpeg       # Debian/Ubuntu
 
 ### ASR engine
 
-Transcription runs NVIDIA [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) on every platform — the int8 build is CPU-only and needs no GPU. Word timings come from the model's own duration head, so there is no separate forced-alignment pass.
+Transcription runs NVIDIA [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) on every platform — the int8 build is CPU-only and needs no GPU. Word timings come from the model's own duration head, so there is no separate forced-alignment pass. Although the upstream model is multilingual, this project intentionally accepts English input only and contains no language-identification path.
 
-The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the 640 MB model from the sherpa-onnx GitHub release into `~/.cache/interactive-media-reader/models/`.
+The first run installs a pinned environment under `~/.cache/interactive-media-reader/venv` and downloads the 640 MB model from the sherpa-onnx GitHub release into `~/.cache/interactive-media-reader/models/`. The 487 MB release archive is verified against its upstream SHA-256 before extraction.
 
 | Variable | Effect |
 | --- | --- |
@@ -49,7 +53,7 @@ The first run installs a pinned environment under `~/.cache/interactive-media-re
 
 The thread default is deliberately below the core count. Measured end to end on an 86-minute file on a 10-core Apple Silicon machine, same code both times, 4 threads ran 4:10 using 882s of CPU where 6 ran 4:46 using 1377s — slower and 56% hungrier, even though an isolated single-window benchmark ranks 6 ahead. Re-measure before raising it.
 
-The model covers Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Anything else — Chinese, Japanese, Korean, Arabic — is out of scope.
+The upstream model can recognize multiple languages, but this project's supported and tested contract is English only. Non-English media is out of scope.
 
 ## Install as an Agent Skill
 
@@ -144,18 +148,19 @@ uv sync --locked --no-dev
 uv run python -m unittest discover -s tests -v
 node --check assets/app.js
 python3 -m py_compile scripts/*.py
+shellcheck scripts/*.sh
 ```
 
-The repository contains no copyrighted media, generated transcript, model, virtual environment, or local output. Tests use synthetic metadata and small text fixtures; full Parakeet inference is an optional local smoke test.
+The repository contains no copyrighted media, generated transcript, model, virtual environment, or local output. Tests use synthetic metadata and small text fixtures; full Parakeet inference is an optional local smoke test. CI covers Python 3.11 and 3.12 on Ubuntu and macOS.
 
 ## Current limitations
 
-- Chinese and every other non-European language is out of scope; the model cannot transcribe them
-- Spoken chapter heading detection covers English only ("Chapter 3", "Part two"); other languages get one transcript chapter
+- Only English-language media is supported; other languages are not detected, translated, or handled
+- Spoken chapter heading detection covers English phrases such as "Chapter 3" and "Part two"
 - Sentence splitting depends on the model's punctuation, so a decode window that loses it is re-decoded rather than salvaged
 - Very long readers render all sentence nodes at once
 - Arbitrary manuscripts and translations are deliberate non-goals
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+The project code is MIT. See [LICENSE](LICENSE). The downloaded model and runtime dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Security reports are handled as described in [SECURITY.md](SECURITY.md).

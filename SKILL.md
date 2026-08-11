@@ -1,14 +1,14 @@
 ---
 name: interactive-media-reader
-description: Convert one local English or European-language audio or video file into a same-language interactive transcript reader with sentence-click playback, synchronized highlighting, chapters, keyboard controls, and a local preview URL. Use when the user asks to turn a local media file into a clickable reader, audio reader, video transcript page, or 跟读/点句播放/字幕阅读页面. Requires only the media path; never request or generate a translation or transcript manuscript. Does not support Chinese, Japanese, Korean, or any other non-European language.
+description: Convert one local English-language audio or video file into an interactive transcript reader with sentence-click playback, synchronized highlighting, chapters, keyboard controls, and a local preview URL. Use when the user asks to turn English media into a clickable reader, audio reader, video transcript page, or 跟读/点句播放/字幕阅读页面. Requires only the media path; never request or generate a translation or transcript manuscript. Does not support any non-English language.
 compatibility: Python 3.11/3.12 and ffmpeg; Parakeet TDT 0.6B v3 through sherpa-onnx on all platforms, CPU only; the 640 MB model downloads on first use.
 ---
 
 # Interactive Media Reader
 
-Build a reader from exactly one required input: a local audio or video path. Do not ask for a transcript or translation. Keep all displayed text in the detected source language.
+Build a reader from exactly one required input: a local English-language audio or video path. Do not ask for a transcript or translation.
 
-The engine is English/European only. If the media is Chinese, Japanese, Korean, or any other non-European language, say so and stop instead of producing a garbled reader.
+The product contract is English only. If the media is known to be non-English, say so and stop. Do not run language identification, multilingual fallback, or translation.
 
 ## Run
 
@@ -32,7 +32,7 @@ The display title resolves as `--title` > yt-dlp sidecar (`<stem>.info.json` or 
 
 - Accept browser-playable MP3, M4A, WAV, FLAC, Ogg/Opus, MP4/M4V, and WebM media; reject codecs the generated browser page cannot reliably play.
 - Preserve the original media through a symbolic link; never modify or duplicate it.
-- Detect the spoken language and transcribe in that same language.
+- Accept and transcribe English-language media only; do not attempt to identify or process other languages.
 - Re-decode collapsed Parakeet windows so a lost punctuation head cannot produce minute-long sentences.
 - Detect explicit spoken chapter headings in English; otherwise use one transcript chapter.
 - Generate a static interactive frontend and VTT subtitles.
