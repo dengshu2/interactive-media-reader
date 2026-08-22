@@ -23,7 +23,19 @@ class StaticAssetTests(unittest.TestCase):
         parser = IdParser()
         parser.feed((ROOT / "assets" / "index.html").read_text(encoding="utf-8"))
         self.assertEqual(len(parser.ids), len(set(parser.ids)))
-        self.assertTrue({"media", "audioFallback", "reader", "player"}.issubset(parser.ids))
+        self.assertTrue({"audio", "reader", "player"}.issubset(parser.ids))
+        self.assertNotIn("media", parser.ids)
+        self.assertNotIn("audioFallback", parser.ids)
+
+    def test_frontend_is_audio_only(self):
+        html = (ROOT / "assets" / "index.html").read_text(encoding="utf-8")
+        styles = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
+        script = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("<video", html)
+        self.assertNotIn("mediaStage", html + script)
+        self.assertNotIn("mediaVideo", script)
+        self.assertNotIn("audioFallback", html + script)
+        self.assertNotIn(".media-stage", styles)
 
     def test_frontend_has_no_remote_dependencies(self):
         combined = "\n".join(
@@ -53,7 +65,7 @@ class StaticAssetTests(unittest.TestCase):
         self.assertIn('class="icon-pause"', html)
         self.assertIn(".play.is-playing .icon-play", styles)
         self.assertIn("playButton.classList.toggle('is-playing', playing)", script)
-        self.assertIn("element.addEventListener('playing', syncPlaying)", script)
+        self.assertIn("audio.addEventListener('playing', syncPlaying)", script)
 
     def test_mobile_controls_use_icons_and_measured_player_height(self):
         html = (ROOT / "assets" / "index.html").read_text(encoding="utf-8")

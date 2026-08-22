@@ -34,8 +34,8 @@ class MediaReaderTests(unittest.TestCase):
         }
         with patch.object(media_reader.subprocess, "run", return_value=Completed(payload)):
             info = media_reader.probe_media(Path("book.mp3"))
-        self.assertEqual(info["mediaType"], "audio")
-        self.assertTrue(info["codecCompatible"])
+        self.assertEqual(info["sourceMediaType"], "audio")
+        self.assertTrue(info["hasVideoStream"])
 
     def test_h264_aac_mp4_is_video(self):
         payload = {
@@ -47,8 +47,54 @@ class MediaReaderTests(unittest.TestCase):
         }
         with patch.object(media_reader.subprocess, "run", return_value=Completed(payload)):
             info = media_reader.probe_media(Path("talk.mp4"))
-        self.assertEqual(info["mediaType"], "video")
-        self.assertTrue(info["codecCompatible"])
+        self.assertEqual(info["sourceMediaType"], "video")
+        self.assertTrue(info["hasVideoStream"])
+
+    def test_playback_audio_strips_video_and_removes_stale_media(self):
+        audio_only = {
+            "streams": [{"codec_type": "audio", "codec_name": "aac", "duration": "10"}],
+            "format": {"duration": "10"},
+        }
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            if command[0] == "ffmpeg":
+                Path(command[-1]).write_bytes(b"normalized audio")
+                return Completed({})
+            return Completed(audio_only)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            source.write_bytes(b"source media")
+            output = root / "reader"
+            media_dir = output / "public" / "media"
+            media_dir.mkdir(parents=True)
+            stale_target = root / "old-video.mp4"
+            stale_target.write_bytes(b"video")
+            stale_link = media_dir / "source.mp4"
+            stale_link.symlink_to(stale_target)
+            (media_dir / "leftover.webm").write_bytes(b"video")
+
+            with patch.object(media_reader.subprocess, "run", side_effect=run):
+                playback = media_reader.prepare_playback_audio(
+                    source, output, {"size": 12, "sha256": "abc"}
+                )
+
+            ffmpeg = next(command for command in commands if command[0] == "ffmpeg")
+            self.assertIn("-vn", ffmpeg)
+            self.assertIn("-sn", ffmpeg)
+            self.assertIn("-dn", ffmpeg)
+            self.assertEqual(ffmpeg[ffmpeg.index("-map") + 1], "0:a:0")
+            self.assertEqual(playback, media_dir / "source.m4a")
+            self.assertTrue(playback.is_file())
+            self.assertFalse(playback.is_symlink())
+            self.assertFalse(stale_link.exists())
+            self.assertFalse((media_dir / "leftover.webm").exists())
+            self.assertEqual([path.name for path in media_dir.iterdir()], ["source.m4a"])
+            self.assertEqual(source.read_bytes(), b"source media")
+            self.assertEqual(stale_target.read_bytes(), b"video")
 
     def test_final_repeated_heading_wins(self):
         def sentence(text, start, end):
@@ -161,12 +207,13 @@ class MediaReaderTests(unittest.TestCase):
             public = Path(directory)
             reader = media_reader.build_reader(
                 asr,
-                {"mediaType": "audio", "duration": 2.5},
+                {"sourceMediaType": "video", "duration": 2.5},
                 "Test Reader",
                 "media/source.mp3",
                 public,
             )
             self.assertEqual(len(reader["sentences"]), 2)
+            self.assertEqual(reader["mediaType"], "audio")
             self.assertEqual(reader["generator"]["version"], media_reader.GENERATOR_VERSION)
             self.assertEqual(reader["alignment"]["averageWordConfidence"], 0.975)
             self.assertTrue((public / "data" / "subtitles.vtt").read_text().startswith("WEBVTT"))
@@ -193,7 +240,7 @@ class MediaReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             return media_reader.build_reader(
                 asr,
-                {"mediaType": "audio", "duration": 1.5},
+                {"sourceMediaType": "audio", "duration": 1.5},
                 "Test Reader",
                 "media/source.mp3",
                 Path(directory),

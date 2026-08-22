@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an English interactive reader from one local media file."""
+"""Build an audio-only English interactive reader from one local media file."""
 
 from __future__ import annotations
 
@@ -42,8 +42,9 @@ ALIGNMENT_METHOD = "Parakeet TDT duration-head word timestamps with degenerate-w
 # higher than a Whisper-calibrated threshold would; it marks roughly the weakest
 # 4% of sentences on real material.
 LOW_CONFIDENCE_THRESHOLD = 0.95
-GENERATOR_VERSION = "0.5.0"
-ASR_PIPELINE_VERSION = 2
+GENERATOR_VERSION = "0.6.0"
+ASR_PIPELINE_VERSION = 3
+PLAYBACK_AUDIO_VERSION = 1
 PROJECT_MARKER = ".interactive-media-reader.json"
 SERVER_HEALTH_PATH = "/.interactive-media-reader-health"
 TRANSCRIBE_OPTIONS = {
@@ -51,9 +52,12 @@ TRANSCRIBE_OPTIONS = {
     "window": "quiet-boundary",
     "windowSeconds": 60.0,
 }
-BROWSER_AUDIO_CODECS = {"aac", "alac", "flac", "mp3", "opus", "pcm_s16le", "pcm_s24le", "vorbis"}
-BROWSER_VIDEO_CODECS = {"av1", "h264", "hevc", "vp8", "vp9"}
-BROWSER_CONTAINERS = {".aac", ".flac", ".m4a", ".m4v", ".mp3", ".mp4", ".ogg", ".opus", ".wav", ".webm"}
+PLAYBACK_AUDIO_OPTIONS = {
+    "codec": "aac",
+    "bitrate": "64k",
+    "channels": 1,
+    "sampleRate": 48000,
+}
 
 
 def json_default(value):
@@ -95,24 +99,17 @@ def probe_media(path: Path) -> dict:
         float(stream["duration"]) for stream in streams
         if stream.get("duration") not in (None, "N/A")
     )
+    video_streams = [stream for stream in streams if stream.get("codec_type") == "video"]
     motion_video = [
-        stream for stream in streams
-        if stream.get("codec_type") == "video"
-        and not bool(stream.get("disposition", {}).get("attached_pic"))
+        stream for stream in video_streams
+        if not bool(stream.get("disposition", {}).get("attached_pic"))
     ]
     audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
-    media_type = "video" if motion_video else "audio"
-    audio_codec = str(audio_streams[0].get("codec_name", "")).lower()
-    video_codec = str(motion_video[0].get("codec_name", "")).lower() if motion_video else None
-    codec_compatible = audio_codec in BROWSER_AUDIO_CODECS and (
-        media_type == "audio" or video_codec in BROWSER_VIDEO_CODECS
-    )
     return {
-        "mediaType": media_type,
+        "sourceMediaType": "video" if motion_video else "audio",
         "duration": max(duration_values, default=0.0),
-        "audioCodec": audio_codec,
-        "videoCodec": video_codec,
-        "codecCompatible": codec_compatible,
+        "audioCodec": str(audio_streams[0].get("codec_name", "")).lower(),
+        "hasVideoStream": bool(video_streams),
     }
 
 
@@ -385,7 +382,7 @@ def build_reader(asr: dict, info: dict, title: str, media_url: str, public: Path
         "title": title,
         "mediaUrl": media_url,
         "audioUrl": media_url,
-        "mediaType": info["mediaType"],
+        "mediaType": "audio",
         "sourceLanguage": "en",
         "duration": info["duration"] or sentences[-1]["end"],
         "chapters": chapters,
@@ -438,22 +435,90 @@ def prepare_output(output: Path, media: Path, fingerprint: dict) -> None:
     )
 
 
-def prepare_public(media: Path, output: Path) -> tuple[Path, str]:
+def prepare_public(output: Path) -> Path:
     public = output / "public"
     public.mkdir(parents=True, exist_ok=True)
     for name in ("index.html", "styles.css", "app.js"):
         shutil.copy2(ASSETS_DIR / name, public / name)
-    media_dir = public / "media"
-    media_dir.mkdir(exist_ok=True)
-    link = media_dir / f"source{media.suffix.lower()}"
-    if os.path.lexists(link):
-        if link.is_symlink() and link.resolve() == media.resolve():
-            pass
+    return public
+
+
+def remove_stale_media(media_dir: Path, keep: Path) -> None:
+    """Remove media artifacts owned by an existing reader, including v0.5 video links."""
+    for path in media_dir.iterdir():
+        if path == keep:
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
         else:
-            link.unlink()
-    if not link.exists():
-        link.symlink_to(media.resolve())
-    return public, f"media/{link.name}"
+            path.unlink()
+
+
+def playback_audio_cache_key(source_fingerprint: dict) -> dict:
+    return {
+        "version": PLAYBACK_AUDIO_VERSION,
+        "source": source_fingerprint,
+        "options": PLAYBACK_AUDIO_OPTIONS,
+    }
+
+
+def prepare_playback_audio(media: Path, output: Path, source_fingerprint: dict) -> Path:
+    """Normalize the first source audio stream to an audio-only browser asset."""
+    public = output / "public"
+    media_dir = public / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    playback = media_dir / "source.m4a"
+    manifest = output / "work" / "playback-audio.json"
+    expected = playback_audio_cache_key(source_fingerprint)
+
+    if playback.is_file() and not playback.is_symlink() and manifest.exists():
+        try:
+            cached = json.loads(manifest.read_text(encoding="utf-8"))
+            playback_info = probe_media(playback)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            cached = None
+            playback_info = {}
+        if (
+            cached == expected
+            and playback_info.get("audioCodec") == "aac"
+            and not playback_info.get("hasVideoStream", True)
+        ):
+            remove_stale_media(media_dir, playback)
+            return playback
+
+    fd, temporary_name = tempfile.mkstemp(prefix="source-", suffix=".m4a", dir=media_dir)
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v", "error",
+                "-y",
+                "-i", str(media),
+                "-map", "0:a:0",
+                "-vn",
+                "-sn",
+                "-dn",
+                "-c:a", PLAYBACK_AUDIO_OPTIONS["codec"],
+                "-b:a", PLAYBACK_AUDIO_OPTIONS["bitrate"],
+                "-ac", str(PLAYBACK_AUDIO_OPTIONS["channels"]),
+                "-ar", str(PLAYBACK_AUDIO_OPTIONS["sampleRate"]),
+                "-movflags", "+faststart",
+                str(temporary),
+            ],
+            check=True,
+        )
+        playback_info = probe_media(temporary)
+        if playback_info["audioCodec"] != "aac" or playback_info["hasVideoStream"]:
+            raise RuntimeError("Normalized playback asset is not audio-only AAC")
+        os.replace(temporary, playback)
+        remove_stale_media(media_dir, playback)
+        atomic_json(manifest, expected)
+        return playback
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def validate_output(output: Path) -> dict:
@@ -468,9 +533,14 @@ def validate_output(output: Path) -> dict:
         raise RuntimeError("Generated reader has no sentences or chapters")
     if any(float(item["start"]) >= float(item["end"]) for item in sentences):
         raise RuntimeError("Generated reader contains invalid sentence timestamps")
+    if reader.get("mediaType") != "audio":
+        raise RuntimeError("Generated reader is not audio-only")
     media = public / reader["mediaUrl"]
-    if not media.exists():
-        raise RuntimeError(f"Generated media link is broken: {media}")
+    if not media.is_file() or media.is_symlink():
+        raise RuntimeError(f"Generated audio asset is missing or not self-contained: {media}")
+    media_info = probe_media(media)
+    if media_info["audioCodec"] != "aac" or media_info["hasVideoStream"]:
+        raise RuntimeError(f"Generated playback asset is not audio-only AAC: {media}")
     return reader
 
 
@@ -568,29 +638,28 @@ def main() -> None:
     if not media.is_file():
         parser.error(f"media file does not exist: {media}")
     output = (args.output.expanduser().resolve() if args.output else media.with_name(f"{media.stem}-reader"))
+    if output in media.parents:
+        parser.error("media input must be outside the reader output directory")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise RuntimeError("ffmpeg and ffprobe are required")
     if args.validate_only:
         reader = validate_output(output)
         print(json.dumps({"valid": True, "output": str(output), "sentences": len(reader["sentences"])}, ensure_ascii=False))
         return
 
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        raise RuntimeError("ffmpeg and ffprobe are required")
     from asr_backends import default_model
     model = args.model or default_model()
-    info = probe_media(media)
-    if media.suffix.lower() not in BROWSER_CONTAINERS or not info["codecCompatible"]:
-        codecs = "/".join(filter(None, [info.get("videoCodec"), info.get("audioCodec")]))
-        raise RuntimeError(
-            f"The media can be transcribed but is not guaranteed to play in a browser "
-            f"({media.suffix or 'unknown container'}, {codecs or 'unknown codec'}). "
-            "Convert it to MP3/M4A for audio or H.264/AAC MP4 for video."
-        )
-    fingerprint = source_fingerprint(media)
-    prepare_output(output, media, fingerprint)
-    public, media_url = prepare_public(media, output)
+    source_info = probe_media(media)
+    source_fingerprint_value = source_fingerprint(media)
+    prepare_output(output, media, source_fingerprint_value)
+    public = prepare_public(output)
+    playback = prepare_playback_audio(media, output, source_fingerprint_value)
+    playback_info = probe_media(playback)
+    playback_fingerprint = source_fingerprint(playback)
     asr_path = output / "work" / "asr.json"
-    asr = transcribe(media, asr_path, fingerprint, model)
-    reader = build_reader(asr, info, resolve_title(media, args.title), media_url, public)
+    asr = transcribe(playback, asr_path, playback_fingerprint, model)
+    media_url = f"media/{playback.name}"
+    reader = build_reader(asr, playback_info, resolve_title(media, args.title), media_url, public)
     validate_output(output)
 
     url = None
@@ -603,7 +672,8 @@ def main() -> None:
         "output": str(output),
         "title": reader["title"],
         "model": model,
-        "mediaType": info["mediaType"],
+        "mediaType": "audio",
+        "sourceMediaType": source_info["sourceMediaType"],
         "language": reader["sourceLanguage"],
         "sentences": len(reader["sentences"]),
         "chapters": len(reader["chapters"]),

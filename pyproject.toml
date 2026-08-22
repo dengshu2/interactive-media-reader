@@ -1,7 +1,7 @@
 [project]
 name = "interactive-media-reader"
-version = "0.5.0"
-description = "Build an interactive transcript reader from one local English-language media file."
+version = "0.6.0"
+description = "Build an audio-only interactive transcript reader from one English-language media source."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"

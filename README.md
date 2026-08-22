@@ -1,30 +1,26 @@
 # Interactive Media Reader
 
-Turn one local English-language audio or video file into a clickable transcript reader. Click any sentence to seek and play; the current sentence follows playback automatically.
+Turn one English-language audio or video source into an **audio-only** clickable transcript reader. Click any sentence to seek and play; the current sentence follows playback automatically.
 
-把一个本地英文音频或视频文件转换成交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。**仅支持英语，其他语言均不处理。**
+把一个英文音频或视频源转换成**纯音频**交互阅读页面：点击句子播放、自动高亮、章节导航、倍速、循环与快捷键。仅支持英语，输出不包含、链接或渲染视频。
 
-> **0.5.0 English-only release**
+> **0.6.0 audio-only release**
 >
-> The supported input is now deliberately limited to English. There is no multilingual detection, fallback, or translation path. Model downloads are checksum-verified, preview servers prove their identity before reuse or shutdown, and low-confidence highlighting uses the same threshold as the generated report.
-
-> **Upgrading from 0.3.x**
+> Every input is normalized to a compact mono AAC/M4A playback asset inside the reader. Local videos remain valid inputs, but their video streams are never copied or linked into the output. The normalized audio is also the ASR input, keeping transcript timing aligned with playback.
 >
-> 0.4.0 replaced Whisper with Parakeet TDT. Starting with 0.5.0, **English is the only supported input language**. Use an older release if you need a different language.
->
-> Existing outputs keep working, but the next build re-transcribes from scratch: the ASR cache key changed, and `work/asr-repaired.json` and `work/gap-repair-report.json` are no longer produced.
->
-> 0.4.0 起改用 Parakeet TDT；0.5.0 起只处理英语，其他语言均不再支持。
+> Rebuilding a 0.5.x reader removes stale media links under `public/media` and re-transcribes from the normalized audio because the ASR cache version changed.
 
 ## Scope
 
-The required input is exactly one local media path.
+The required input is exactly one English media source: a local path for direct use, or a URL handled by the agent workflow.
 
 - English only; all other languages are out of scope
+- Audio-only reader output, even when the local source is video
+- URL workflow downloads `bestaudio` only and never downloads a video stream
 - No transcript manuscript required
 - No translation requested or generated
 - No cloud transcription API
-- Original media is never modified or copied; the output uses a symbolic link
+- User source media is never modified or deleted
 - Preview servers bind to `127.0.0.1` only
 
 ## Requirements
@@ -61,11 +57,14 @@ The upstream model can recognize multiple languages, but this project's supporte
 npx skills add dengshu2/interactive-media-reader -g --agent pi -y
 ```
 
-Then ask Pi:
+Then ask Pi with a local path or URL:
 
 ```text
-把 /absolute/path/to/media.mp4 做成交互式阅读器
+把 /absolute/path/to/media.mp4 做成纯音频交互式阅读器
+把 https://example.com/talk 做成纯音频交互式阅读器，不要下载视频
 ```
+
+For URLs, the skill downloads only an audio-only format with `yt-dlp -f bestaudio`; it stops if the source offers no audio-only stream.
 
 Or invoke the skill directly:
 
@@ -91,18 +90,11 @@ The display title is resolved in this order: `--title`, a yt-dlp sidecar (`<stem
 ./scripts/build.sh input.mp3 --title "10 Positive Habits That Will Rewire Your Mindset" --open
 ```
 
-## Supported playback formats
+## Supported inputs and playback
 
-The pipeline intentionally rejects media that FFmpeg can decode but the generated browser page cannot reliably play.
+Any local audio or video that FFmpeg can decode is accepted when it contains an audio stream. The first audio stream is normalized to `public/media/source.m4a` as mono AAC at 64 kbit/s. FFmpeg receives `-vn -sn -dn`, so video, subtitle, data, and attached-picture streams cannot enter the reader.
 
-- Audio: MP3, M4A/AAC, WAV/PCM, FLAC, Ogg/Vorbis, Opus
-- Video: MP4/M4V or WebM with a browser-compatible video/audio codec
-
-For other formats, create a browser proxy first:
-
-```bash
-ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4
-```
+The normalized asset is self-contained rather than a source symlink. The original input stays outside the reader and is never modified or deleted.
 
 ## Output
 
@@ -115,12 +107,13 @@ ffmpeg -i input.mkv -c:v libx264 -c:a aac output.mp4
 │   ├── styles.css
 │   ├── data/reader.json
 │   ├── data/subtitles.vtt
-│   └── media/source.* -> original media
+│   └── media/source.m4a
 └── work/
+    ├── playback-audio.json
     └── asr.json
 ```
 
-A marker file prevents accidental writes into unrelated non-empty directories. ASR caches are reused only when the source SHA-256, model, decoding options, and pipeline version all match.
+A marker file prevents accidental writes into unrelated non-empty directories. Playback audio is reused only when its source hash and normalization options match; ASR is reused only when the normalized audio hash, model, decoding options, and pipeline version match. Rebuilds remove stale media files and symlinks from the reader-owned `public/media` directory.
 
 ## Quality safeguards
 
@@ -156,6 +149,7 @@ The repository contains no copyrighted media, generated transcript, model, virtu
 ## Current limitations
 
 - Only English-language media is supported; other languages are not detected, translated, or handled
+- Readers are deliberately audio-only; source video is never available in the generated page
 - Spoken chapter heading detection covers English phrases such as "Chapter 3" and "Part two"
 - Sentence splitting depends on the model's punctuation, so a decode window that loses it is re-decoded rather than salvaged
 - Very long readers render all sentence nodes at once

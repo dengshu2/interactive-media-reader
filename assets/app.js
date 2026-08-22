@@ -1,8 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const mediaVideo = $('#media');
-const audioFallback = $('#audioFallback');
-const mediaElements = [mediaVideo, audioFallback];
-let audio = audioFallback;
+const audio = $('#audio');
 const seek = $('#seek');
 const playButton = $('#play');
 const shortcutDialog = $('#shortcutDialog');
@@ -397,11 +394,9 @@ function render() {
     }
   }
 
-  audio = data.mediaType === 'video' ? mediaVideo : audioFallback;
-  audio.src = data.mediaUrl || data.audioUrl;
+  audio.src = data.audioUrl || data.mediaUrl;
   setPlayIcon(false);
   audio.addEventListener('loadedmetadata', restoreProgress, { once: true });
-  $('#mediaStage').hidden = data.mediaType !== 'video';
   $('#loading').hidden = true;
   $('#app').hidden = false;
   player.hidden = false;
@@ -429,30 +424,24 @@ function setPlayIcon(playing) {
 }
 
 playButton.addEventListener('click', togglePlayback);
-mediaElements.forEach((element) => {
-  const syncPlaying = () => {
-    if (element !== audio) return;
-    setPlayIcon(!element.paused && !element.ended);
-    cancelAnimationFrame(rafId);
-    update();
-  };
-  const syncPaused = () => {
-    if (element !== audio) return;
-    setPlayIcon(false);
-    if (data) saveProgress(audio.currentTime);
-    cancelAnimationFrame(rafId);
-    update();
-  };
-  element.addEventListener('play', syncPlaying);
-  element.addEventListener('playing', syncPlaying);
-  element.addEventListener('pause', syncPaused);
-  element.addEventListener('ended', syncPaused);
-  element.addEventListener('emptied', () => {
-    if (element === audio) setPlayIcon(false);
-  });
-  element.addEventListener('loadedmetadata', update);
-  element.addEventListener('seeked', update);
-});
+const syncPlaying = () => {
+  setPlayIcon(!audio.paused && !audio.ended);
+  cancelAnimationFrame(rafId);
+  update();
+};
+const syncPaused = () => {
+  setPlayIcon(false);
+  if (data) saveProgress(audio.currentTime);
+  cancelAnimationFrame(rafId);
+  update();
+};
+audio.addEventListener('play', syncPlaying);
+audio.addEventListener('playing', syncPlaying);
+audio.addEventListener('pause', syncPaused);
+audio.addEventListener('ended', syncPaused);
+audio.addEventListener('emptied', () => setPlayIcon(false));
+audio.addEventListener('loadedmetadata', update);
+audio.addEventListener('seeked', update);
 seek.addEventListener('input', () => { audio.currentTime = Number(seek.value); update(); });
 $('#previous').addEventListener('click', () => moveSentence(-1));
 $('#next').addEventListener('click', () => moveSentence(1));

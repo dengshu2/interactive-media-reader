@@ -8,4 +8,4 @@ Interactive Media Reader is MIT-licensed, but it installs or downloads the follo
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) and `sherpa-onnx-core` | Local ONNX inference runtime | Apache-2.0 |
 | [NumPy](https://github.com/numpy/numpy) | Audio and timing arrays | BSD-3-Clause |
 
-The generated reader contains only this project's static assets, generated transcript data, and a symbolic link to the user's original media. It does not bundle the ASR model or Python dependencies.
+The generated reader contains only this project's static assets, generated transcript data, and a locally normalized audio-only AAC playback file. It does not contain or link source video, or bundle the ASR model or Python dependencies.

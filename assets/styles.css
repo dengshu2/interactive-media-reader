@@ -171,16 +171,6 @@ body.player-collapsed { --player-offset: 0px; }
 .hero h1 { max-width: 860px; margin: 15px 0 14px; overflow-wrap: anywhere; font: 600 clamp(34px, 5vw, 56px)/1.08 "Literata", Georgia, serif; letter-spacing: -.04em; }
 .hero p { color: var(--muted); font-size: 16px; }
 .hero-meta { margin: 0 0 6px; font-size: 13px; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
-.media-stage {
-  width: min(100%, 1040px);
-  margin: -42px auto 64px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #101820;
-  box-shadow: 0 18px 48px rgba(18, 37, 49, .14);
-}
-.media-stage video { display: block; width: 100%; max-height: min(62vh, 680px); background: #101820; }
 .reader { width: min(100%, var(--measure)); margin: 0 auto; }
 .chapter { margin: 0 0 78px; scroll-margin-top: 40px; }
 .chapter h2 { margin: 0 0 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); font: 600 clamp(24px, 3vw, 34px)/1.2 "Literata", Georgia, serif; letter-spacing: -.025em; }
