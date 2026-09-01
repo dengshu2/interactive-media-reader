@@ -7,12 +7,12 @@ requires-python = ">=3.11,<3.13"
 license = "MIT"
 authors = [{ name = "dengshu2" }]
 dependencies = [
-  "sherpa-onnx==1.13.5",
+  "sherpa-onnx==1.13.6",
   # sherpa-onnx ships its native libraries (libonnxruntime, libsherpa-onnx-*)
   # in this companion package. The wheel declares the dependency but the sdist
   # does not, and uv resolves from the sdist metadata, so without this line the
   # lock omits it and `import sherpa_onnx` dies on a missing @rpath/libonnxruntime.
-  "sherpa-onnx-core==1.13.5",
+  "sherpa-onnx-core==1.13.6",
   "numpy==2.4.6",
 ]
 
