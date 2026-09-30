@@ -24,10 +24,10 @@ If no audio-only format exists, stop and explain that the source cannot be proce
 
 ## Build
 
-Resolve paths to absolute paths, then run:
+Resolve media paths to absolute paths. `scripts/` lives in this skill's directory, not the working directory, so call it by full path:
 
 ```bash
-./scripts/build.sh "/absolute/path/to/media" --open
+<skill-dir>/scripts/build.sh "/absolute/path/to/media" --open
 ```
 
 A local video is accepted as input, but only its first audio stream is used. The builder creates a compact mono AAC/M4A playback asset inside the reader, transcribes that exact asset so timings match, and never copies, symlinks, or renders the video.
@@ -35,7 +35,7 @@ A local video is accepted as input, but only its first audio stream is used. The
 The default output is a sibling directory named `<media-stem>-reader`. To avoid replacing an existing unrelated directory, pass an explicit output:
 
 ```bash
-./scripts/build.sh "/absolute/path/to/media" --output "/absolute/path/to/output" --open
+<skill-dir>/scripts/build.sh "/absolute/path/to/media" --output "/absolute/path/to/output" --open
 ```
 
 The command prints a JSON summary containing the resolved title, output path, sentence/chapter counts, low-confidence sentence count, source media type, and local URL. Report these concisely to the user.
@@ -63,7 +63,7 @@ The display title resolves as `--title` > yt-dlp sidecar (`<stem>.info.json` or 
 After building, verify:
 
 ```bash
-./scripts/build.sh "/absolute/path/to/media" --output "/absolute/path/to/output" --validate-only
+<skill-dir>/scripts/build.sh "/absolute/path/to/media" --output "/absolute/path/to/output" --validate-only
 ```
 
 Validation rejects missing/symlinked playback media, non-AAC media, any video stream, and non-audio reader metadata.
